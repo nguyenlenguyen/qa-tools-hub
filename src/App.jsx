@@ -73,7 +73,7 @@ const ImageGenerator = () => {
 
       const displayText = customText || `${canvas.width}x${canvas.height}`;
       ctx.fillText(displayText, canvas.width / 2, canvas.height / 2 - fontSize / 2);
-      ctx.fillText(`${canvas.width} x ${canvas.height}`, canvas.width / 2, canvas.height / 2 + fontSize / 2);
+      ctx.fillText(`${canvas.width} x ${canvas.height} • ${format.toUpperCase()}`, canvas.width / 2, canvas.height / 2 + fontSize / 2);
 
       const mimeType = `image/${format === 'jpg' ? 'jpeg' : format}`;
 
@@ -166,38 +166,34 @@ const ImageGenerator = () => {
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-gray-700 flex justify-between">
-              <span>Force File Size (Optional)</span>
-              <span className="text-xs text-blue-500 bg-blue-50 px-2 py-0.5 rounded">Padding Trick</span>
-            </label>
-            <div className="flex gap-2">
-              <input type="number" placeholder="Empty = original" value={targetSize} onChange={(e) => setTargetSize(e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" />
-              <select value={sizeUnit} onChange={(e) => setSizeUnit(e.target.value)} className="w-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white transition-shadow">
-                <option value="KB">KB</option>
-                <option value="MB">MB</option>
-              </select>
+          <div className="grid grid-cols-12 gap-3">
+            <div className="col-span-12 sm:col-span-6 space-y-1.5">
+              <label className="text-sm font-medium text-gray-700">Size (Optional)</label>
+              <div className="flex gap-2">
+                <input type="number" placeholder="Original" value={targetSize} onChange={(e) => setTargetSize(e.target.value)} className="w-full min-w-0 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" />
+                <select value={sizeUnit} onChange={(e) => setSizeUnit(e.target.value)} className="w-20 shrink-0 px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white transition-shadow">
+                  <option value="KB">KB</option>
+                  <option value="MB">MB</option>
+                </select>
+              </div>
             </div>
-          </div>
 
-          <div className="grid grid-cols-2 gap-4 pt-2">
-            <div className="space-y-1.5">
+            <div className="col-span-6 sm:col-span-3 space-y-1.5">
               <label className="text-sm font-medium text-gray-700">Background</label>
-              <div className="flex gap-2 items-center">
-                <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="h-10 w-10 p-1 border border-gray-300 rounded-lg cursor-pointer" />
-                <span className="text-sm text-gray-500 uppercase">{bgColor}</span>
+              <div className="flex items-center">
+                <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="h-[42px] w-full p-1 border border-gray-300 rounded-lg cursor-pointer" />
               </div>
             </div>
-            <div className="space-y-1.5">
+
+            <div className="col-span-6 sm:col-span-3 space-y-1.5">
               <label className="text-sm font-medium text-gray-700">Text Color</label>
-              <div className="flex gap-2 items-center">
-                <input type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} className="h-10 w-10 p-1 border border-gray-300 rounded-lg cursor-pointer" />
-                <span className="text-sm text-gray-500 uppercase">{textColor}</span>
+              <div className="flex items-center">
+                <input type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} className="h-[42px] w-full p-1 border border-gray-300 rounded-lg cursor-pointer" />
               </div>
             </div>
           </div>
 
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 pt-1">
             <label className="text-sm font-medium text-gray-700">Custom Text</label>
             <input type="text" value={customText} onChange={(e) => setCustomText(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" />
           </div>
@@ -359,8 +355,8 @@ const DummyTextGenerator = () => {
         <button
           onClick={handleCopy}
           className={`absolute top-4 right-4 px-3 py-2 rounded-lg shadow-sm border text-sm font-medium flex items-center gap-2 transition-all duration-200 ${isCopied
-              ? 'bg-green-50 border-green-200 text-green-700'
-              : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50 opacity-0 group-hover:opacity-100'
+            ? 'bg-green-50 border-green-200 text-green-700'
+            : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50 opacity-0 group-hover:opacity-100'
             }`}
         >
           {isCopied ? (
