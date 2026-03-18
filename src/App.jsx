@@ -1,10 +1,33 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Download, Image as ImageIcon, Settings, AlertCircle, CheckCircle2,
-  Menu, X, Type, Code, FileJson, ChevronRight, Copy, Trash2,
-  Maximize2, Minimize2, Check, Clock, CalendarDays, RefreshCw, ArrowRightLeft, Palette,
-  Binary, AlignLeft, GitCompare, Network, Search, Music, Video, Film, Loader2, Lock
+  AlertCircle,
+  AlignLeft,
+  ArrowRightLeft,
+  Binary,
+  CalendarDays,
+  Check,
+  CheckCircle2,
+  ChevronRight,
+  Clock,
+  Code,
+  Copy,
+  Download,
+  FileJson,
+  Film,
+  GitCompare,
+  Image as ImageIcon,
+  Loader2, Lock,
+  Maximize2,
+  Menu,
+  Minimize2,
+  Music,
+  Palette,
+  RefreshCw,
+  Settings,
+  Trash2,
+  Type,
+  X
 } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
 
 // ==========================================
 // UTILS
@@ -1973,138 +1996,6 @@ const EncoderTool = () => {
       </div>
       <div style={{ display: activeTab === 'base64' ? 'block' : 'none' }}><Base64Tab /></div>
       <div style={{ display: activeTab === 'aes' ? 'block' : 'none' }}><AesTab /></div>
-    </div>
-  );
-};
-  const [input, setInput] = useState('');
-  const [mode, setMode] = useState('encode');
-  const [output, setOutput] = useState('');
-  const [error, setError] = useState('');
-  const [isCopied, setIsCopied] = useState(false);
-
-  useEffect(() => {
-    if (!input) {
-      setOutput('');
-      setError('');
-      return;
-    }
-
-    try {
-      if (mode === 'encode') {
-        const bytes = new TextEncoder().encode(input);
-        const binString = Array.from(bytes, (byte) => String.fromCodePoint(byte)).join("");
-        setOutput(btoa(binString));
-        setError('');
-      } else {
-        const binString = atob(input.trim());
-        const bytes = Uint8Array.from(binString, (m) => m.codePointAt(0));
-        setOutput(new TextDecoder().decode(bytes));
-        setError('');
-      }
-    } catch (err) {
-      setOutput('');
-      setError('Invalid input. Please check the ' + (mode === 'encode' ? 'text' : 'Base64') + ' string.');
-    }
-  }, [input, mode]);
-
-  const handleCopy = () => {
-    if (output) {
-      copyTextToClipboard(output);
-      setIsCopied(true);
-      setTimeout(() => setIsCopied(false), 2000);
-    }
-  };
-
-  const clearInput = () => {
-    setInput('');
-    setOutput('');
-    setError('');
-  };
-
-  return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col min-h-[500px] xl:h-[calc(100vh-16rem)] max-w-6xl">
-      <div className="bg-gray-50 border-b border-gray-200 px-4 py-3 flex flex-wrap gap-4 items-center justify-between">
-        <div className="flex items-center gap-2">
-          <button onClick={clearInput} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors">
-            <Trash2 size={16} /> <span className="hidden sm:inline">Clear</span>
-          </button>
-          <div className="w-px h-5 bg-gray-300 mx-2 hidden sm:block"></div>
-
-          <div className="flex bg-white rounded-lg border border-gray-300 overflow-hidden p-0.5">
-            <button
-              onClick={() => setMode('encode')}
-              className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${mode === 'encode' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-50'}`}
-            >
-              Encode
-            </button>
-            <button
-              onClick={() => setMode('decode')}
-              className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${mode === 'decode' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-50'}`}
-            >
-              Decode
-            </button>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleCopy}
-            disabled={!!error || !output}
-            className={`flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium text-white rounded-lg shadow-sm transition-all duration-200 ${isCopied ? 'bg-green-600' : 'bg-gray-900 hover:bg-gray-800 disabled:bg-gray-400 disabled:cursor-not-allowed'
-              }`}
-          >
-            {isCopied ? <Check size={16} /> : <Copy size={16} />}
-            <span className="hidden sm:inline">{isCopied ? 'Copied' : 'Copy'}</span>
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="px-4 py-3 bg-red-50 border-b border-red-100 flex items-start gap-2">
-          <AlertCircle size={18} className="text-red-600 mt-0.5 shrink-0" />
-          <div>
-            <p className="text-sm font-bold text-red-800">Conversion Error</p>
-            <p className="text-sm text-red-600 mt-0.5">{error}</p>
-          </div>
-        </div>
-      )}
-
-      <div className="flex-1 flex flex-col xl:flex-row min-h-0">
-        <div className="flex-1 flex flex-col border-b xl:border-b-0 xl:border-r border-gray-200 bg-white relative min-h-[250px] xl:min-h-0">
-          <div className="px-4 py-2 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Input ({mode === 'encode' ? 'Text' : 'Base64'})</span>
-          </div>
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={mode === 'encode' ? "Enter text to encode (supports Unicode)..." : "Enter Base64 string to decode..."}
-            className="flex-1 w-full p-4 resize-none outline-none font-mono text-sm leading-relaxed text-gray-800 bg-transparent h-full"
-            spellCheck="false"
-          />
-        </div>
-
-        <div className="flex-1 flex flex-col bg-[#fafafa] relative min-h-[250px] xl:min-h-0">
-          <div className="px-4 py-2 border-b border-gray-100 bg-white/50 flex justify-between items-center">
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Output ({mode === 'encode' ? 'Base64' : 'Text'})</span>
-            {!error && output && (
-              <span className="flex items-center gap-1 text-xs font-medium text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
-                <CheckCircle2 size={12} /> Success
-              </span>
-            )}
-          </div>
-          <div className="flex-1 p-4 overflow-auto custom-scrollbar relative">
-            {output ? (
-              <pre className="font-mono text-sm leading-relaxed whitespace-pre-wrap word-break-all text-gray-800 break-all">
-                {output}
-              </pre>
-            ) : (
-              <div className="h-full flex items-center justify-center text-gray-400 text-sm">
-                {error ? 'Fix errors to view result' : 'No data'}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
     </div>
   );
 };
