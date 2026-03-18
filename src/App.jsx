@@ -302,12 +302,13 @@ const AudioTab = () => {
     if (ffmpegLoadedRef.current) return ffmpegRef.current;
     setProgress('Loading FFmpeg engine (~30MB, first time only)...');
     const { FFmpeg } = await import('@ffmpeg/ffmpeg');
-    const { fetchFile } = await import('@ffmpeg/util');
+    const { fetchFile, toBlobURL } = await import('@ffmpeg/util');
     const ffmpeg = new FFmpeg();
+    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
     await ffmpeg.load({
-      coreURL: new URL('/ffmpeg-core.js', window.location.origin).href,
-      wasmURL: new URL('/ffmpeg-core.wasm', window.location.origin).href,
-      workerURL: new URL('/ffmpeg-worker.js', window.location.origin).href,
+      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+      workerURL: await toBlobURL(`https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/worker.js`, 'text/javascript'),
     });
     ffmpegRef.current = { ffmpeg, fetchFile };
     ffmpegLoadedRef.current = true;
@@ -655,12 +656,13 @@ const VideoTab = () => {
     if (ffmpegLoadedRef.current) return ffmpegRef.current;
     setProgress('Loading FFmpeg engine (~30MB, first time only)...');
     const { FFmpeg } = await import('@ffmpeg/ffmpeg');
-    const { fetchFile } = await import('@ffmpeg/util');
+    const { fetchFile, toBlobURL } = await import('@ffmpeg/util');
     const ffmpeg = new FFmpeg();
+    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
     await ffmpeg.load({
-      coreURL: new URL('/ffmpeg-core.js', window.location.origin).href,
-      wasmURL: new URL('/ffmpeg-core.wasm', window.location.origin).href,
-      workerURL: new URL('/ffmpeg-worker.js', window.location.origin).href,
+      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+      workerURL: await toBlobURL(`https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/worker.js`, 'text/javascript'),
     });
     ffmpegRef.current = { ffmpeg, fetchFile };
     ffmpegLoadedRef.current = true;
