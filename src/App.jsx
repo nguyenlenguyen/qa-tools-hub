@@ -1,3 +1,4 @@
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   AlertCircle,
   AlignLeft,
@@ -28,22 +29,33 @@ import {
   Type,
   X
 } from 'lucide-react';
-import React, { useEffect, useRef, useState } from 'react';
 
 // ==========================================
 // UTILS
 // ==========================================
-const copyTextToClipboard = (text) => {
-  const textArea = document.createElement("textarea");
-  textArea.value = text;
-  document.body.appendChild(textArea);
-  textArea.select();
+const copyTextToClipboard = async (text) => {
   try {
-    document.execCommand('copy');
-  } catch (err) {
-    console.error('Failed to copy', err);
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // Fallback for older browsers or insecure contexts
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.style.cssText = "position:fixed;opacity:0;left:-9999px";
+    document.body.appendChild(textArea);
+    textArea.select();
+    try { document.execCommand('copy'); } catch (err) { console.error('Failed to copy', err); }
+    document.body.removeChild(textArea);
   }
-  document.body.removeChild(textArea);
+};
+
+// Shared utility
+const formatBytes = (bytes, decimals = 2) => {
+  if (!+bytes) return '0 Bytes';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 };
 
 // ==========================================
@@ -68,14 +80,7 @@ const ImageTab = () => {
 
   const canvasRef = useRef(null);
 
-  const formatBytes = (bytes, decimals = 2) => {
-    if (!+bytes) return '0 Bytes';
-    const k = 1024;
-    const dm = decimals < 0 ? 0 : decimals;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
-  };
+  // formatBytes is now a shared utility defined at the top of the file
 
   const generateImage = () => {
     setIsGenerating(true);
@@ -126,6 +131,8 @@ const ImageTab = () => {
               setIsGenerating(false);
               return;
             }
+            // Note: appended padding makes the file technically invalid for strict format parsers,
+            // but most image viewers will still display it correctly.
           } else if (targetBytes < blob.size) {
             setError(`Warning: Original size (${formatBytes(blob.size)}) is already larger than target size.`);
           }
@@ -314,13 +321,16 @@ const AudioTab = () => {
   const [error, setError] = useState('');
   const ffmpegRef = useRef(null);
   const ffmpegLoadedRef = useRef(false);
+  const resultUrlRef = useRef(null);
 
-  const formatBytes = (bytes) => {
-    if (!+bytes) return '0 Bytes';
-    const k = 1024, sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
-  };
+  // formatBytes is now a shared utility defined at the top of the file
+
+  // Cleanup Object URLs on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current);
+    };
+  }, []);
 
   const loadFFmpeg = async () => {
     if (ffmpegLoadedRef.current) return ffmpegRef.current;
@@ -339,32 +349,21 @@ const AudioTab = () => {
     return ffmpegRef.current;
   };
 
-  const audioTypeRef = useRef(audioType);
-  const sampleRateRef = useRef(sampleRate);
-  const formatRef = useRef(format);
-  const durationRef = useRef(duration);
-  const targetSizeRef = useRef(targetSize);
-  const sizeUnitRef = useRef(sizeUnit);
-
-  useEffect(() => { audioTypeRef.current = audioType; }, [audioType]);
-  useEffect(() => { sampleRateRef.current = sampleRate; }, [sampleRate]);
-  useEffect(() => { formatRef.current = format; }, [format]);
-  useEffect(() => { durationRef.current = duration; }, [duration]);
-  useEffect(() => { targetSizeRef.current = targetSize; }, [targetSize]);
-  useEffect(() => { sizeUnitRef.current = sizeUnit; }, [sizeUnit]);
-
   const generateAudio = async () => {
     setIsGenerating(true);
     setError('');
+    // Revoke previous Object URL to prevent memory leak
+    if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current);
     setResultUrl(null);
+    resultUrlRef.current = null;
 
-    // Read latest values from refs to avoid stale closure
-    const currentAudioType = audioTypeRef.current;
-    const currentSampleRate = parseInt(sampleRateRef.current);
-    const currentFormat = formatRef.current;
-    const currentDuration = parseFloat(durationRef.current);
-    const currentTargetSize = targetSizeRef.current;
-    const currentSizeUnit = sizeUnitRef.current;
+    // Read latest values directly from state (called synchronously from click handler)
+    const currentAudioType = audioType;
+    const currentSampleRate = parseInt(sampleRate);
+    const currentFormat = format;
+    const currentDuration = parseFloat(duration);
+    const currentTargetSize = targetSize;
+    const currentSizeUnit = sizeUnit;
 
     try {
       setProgress('Generating audio samples...');
@@ -445,6 +444,7 @@ const AudioTab = () => {
         }
         const blob = finalBuffer instanceof Blob ? finalBuffer : new Blob([finalBuffer], { type: 'audio/wav' });
         const url = URL.createObjectURL(blob);
+        resultUrlRef.current = url;
         setResultUrl(url); setResultSize(blob.size);
         setResultName(`qa_audio_${currentDuration}s_${formatBytes(blob.size).replace(' ', '')}.wav`);
       } else {
@@ -479,6 +479,7 @@ const AudioTab = () => {
           }
         }
         const url = URL.createObjectURL(blob);
+        resultUrlRef.current = url;
         setResultUrl(url); setResultSize(blob.size);
         setResultName(`qa_audio_${currentDuration}s_${formatBytes(blob.size).replace(' ', '')}.${currentFormat}`);
       }
@@ -668,13 +669,16 @@ const VideoTab = () => {
   const [error, setError] = useState('');
   const ffmpegRef = useRef(null);
   const ffmpegLoadedRef = useRef(false);
+  const resultUrlRef = useRef(null);
 
-  const formatBytes = (bytes) => {
-    if (!+bytes) return '0 Bytes';
-    const k = 1024, sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
-  };
+  // formatBytes is now a shared utility defined at the top of the file
+
+  // Cleanup Object URLs on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current);
+    };
+  }, []);
 
   const loadFFmpeg = async () => {
     if (ffmpegLoadedRef.current) return ffmpegRef.current;
@@ -696,7 +700,10 @@ const VideoTab = () => {
   const generateVideo = async () => {
     setIsGenerating(true);
     setError('');
+    // Revoke previous Object URL to prevent memory leak
+    if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current);
     setResultUrl(null);
+    resultUrlRef.current = null;
 
     try {
       const w = parseInt(width) || 1280;
@@ -776,6 +783,14 @@ const VideoTab = () => {
       ]);
 
       const data = await ffmpeg.readFile(`output.${format}`);
+
+      // Clean up FFmpeg virtual filesystem to free WASM memory
+      setProgress('Cleaning up temporary files...');
+      for (let f = 0; f < totalFrames; f++) {
+        try { await ffmpeg.deleteFile(`frame${String(f).padStart(5, '0')}.png`); } catch { }
+      }
+      try { await ffmpeg.deleteFile(`output.${format}`); } catch { }
+
       let blob = new Blob([data.buffer], { type: mimeMap[format] || 'video/mp4' });
 
       if (targetSize && parseFloat(targetSize) > 0) {
@@ -788,6 +803,7 @@ const VideoTab = () => {
       }
 
       const url = URL.createObjectURL(blob);
+      resultUrlRef.current = url;
       const name = `qa_video_${w}x${h}_${dur}s_${formatBytes(blob.size).replace(' ', '')}.${format}`;
       setResultUrl(url); setResultSize(blob.size); setResultName(name);
       setProgress('');
@@ -996,8 +1012,8 @@ const MediaGenerator = () => {
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${isActive
-                  ? 'bg-white text-gray-900 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-700'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
                 }`}
             >
               <Icon size={16} />
@@ -1024,7 +1040,7 @@ const DummyTextGenerator = () => {
   const [text, setText] = useState('');
   const [isCopied, setIsCopied] = useState(false);
 
-  const generateText = () => {
+  const generateText = useCallback(() => {
     const lorem = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. ";
 
     const pCount = Math.max(1, parseInt(paragraphs) || 1);
@@ -1065,9 +1081,9 @@ const DummyTextGenerator = () => {
     }
 
     setIsCopied(false);
-  };
+  }, [paragraphs, characters]);
 
-  useEffect(() => generateText(), [paragraphs, characters]);
+  useEffect(() => generateText(), [generateText]);
 
   const handleCopy = () => {
     copyTextToClipboard(text);
@@ -1169,26 +1185,35 @@ const JsonFormatter = () => {
     setError(null);
   };
 
-  const syntaxHighlight = (jsonString) => {
-    if (!jsonString) return '';
-    let json = jsonString.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const regex = /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g;
-    return json.replace(regex, function (match) {
+  const syntaxHighlightNodes = useMemo(() => {
+    if (!output) return null;
+    const regex = /("(?:\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(?:\s*:)?|\b(?:true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+    while ((match = regex.exec(output)) !== null) {
+      // Push text before match
+      if (match.index > lastIndex) {
+        parts.push(<span key={`t${lastIndex}`}>{output.slice(lastIndex, match.index)}</span>);
+      }
+      // Determine color class
       let cls = 'text-blue-500';
-      if (/^"/.test(match)) {
-        if (/:$/.test(match)) {
-          cls = 'text-purple-600 font-medium';
-        } else {
-          cls = 'text-emerald-600';
-        }
-      } else if (/true|false/.test(match)) {
+      if (/^"/.test(match[0])) {
+        cls = /:$/.test(match[0]) ? 'text-purple-600 font-medium' : 'text-emerald-600';
+      } else if (/true|false/.test(match[0])) {
         cls = 'text-amber-500 font-bold';
-      } else if (/null/.test(match)) {
+      } else if (/null/.test(match[0])) {
         cls = 'text-gray-400 italic';
       }
-      return '<span class="' + cls + '">' + match + '</span>';
-    });
-  };
+      parts.push(<span key={`m${match.index}`} className={cls}>{match[0]}</span>);
+      lastIndex = regex.lastIndex;
+    }
+    // Push remaining text
+    if (lastIndex < output.length) {
+      parts.push(<span key={`t${lastIndex}`}>{output.slice(lastIndex)}</span>);
+    }
+    return parts;
+  }, [output]);
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col min-h-[500px] xl:h-[calc(100vh-16rem)]">
@@ -1269,10 +1294,9 @@ const JsonFormatter = () => {
           </div>
           <div className="flex-1 p-4 overflow-auto custom-scrollbar relative">
             {output ? (
-              <pre
-                className="font-mono text-sm leading-relaxed"
-                dangerouslySetInnerHTML={{ __html: syntaxHighlight(output) }}
-              />
+              <pre className="font-mono text-sm leading-relaxed">
+                {syntaxHighlightNodes}
+              </pre>
             ) : (
               <div className="h-full flex items-center justify-center text-gray-400 text-sm">
                 {error ? 'Fix errors to view result' : 'No valid data yet'}
@@ -1650,9 +1674,6 @@ const ColorConverter = () => {
   );
 };
 
-// ==========================================
-// TOOL 6: BASE64 CONVERTER
-// ==========================================
 // ==========================================
 // TOOL 6: ENCODER / DECRYPT TOOL
 // ==========================================
@@ -2133,6 +2154,33 @@ const TextDiffChecker = () => {
   const [modifiedText, setModifiedText] = useState('');
   const [diffResult, setDiffResult] = useState(null);
 
+  // LCS-based diff algorithm for proper insertion/deletion detection
+  const computeLCS = (a, b) => {
+    const m = a.length, n = b.length;
+    const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+    // Backtrack to build diff
+    const diffs = [];
+    let i = m, j = n;
+    while (i > 0 || j > 0) {
+      if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
+        diffs.unshift({ type: 'equal', orig: a[i - 1], mod: b[j - 1], origNum: i, modNum: j });
+        i--; j--;
+      } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+        diffs.unshift({ type: 'add', mod: b[j - 1], modNum: j });
+        j--;
+      } else {
+        diffs.unshift({ type: 'remove', orig: a[i - 1], origNum: i });
+        i--;
+      }
+    }
+    return diffs;
+  };
+
   const handleCompare = () => {
     if (!originalText && !modifiedText) {
       setDiffResult(null);
@@ -2141,17 +2189,7 @@ const TextDiffChecker = () => {
 
     const lines1 = originalText.split('\n');
     const lines2 = modifiedText.split('\n');
-    const max = Math.max(lines1.length, lines2.length);
-    const diffs = [];
-
-    for (let i = 0; i < max; i++) {
-      diffs.push({
-        num: i + 1,
-        orig: lines1[i],
-        mod: lines2[i],
-        isChanged: lines1[i] !== lines2[i]
-      });
-    }
+    const diffs = computeLCS(lines1, lines2);
     setDiffResult(diffs);
   };
 
@@ -2221,38 +2259,53 @@ const TextDiffChecker = () => {
           <div className="p-0 overflow-x-hidden custom-scrollbar max-h-[600px] overflow-y-auto">
             <div className="w-full flex flex-col font-mono text-sm leading-6 text-gray-800">
               {diffResult.map((row, index) => {
-                const origDefined = row.orig !== undefined;
-                const modDefined = row.mod !== undefined;
-
-                return (
-                  <div key={index} className="flex w-full border-b border-gray-100 hover:bg-gray-100/30">
-                    {/* Left Side - Original */}
-                    <div className={`flex w-1/2 px-2 border-r border-gray-200 ${row.isChanged && origDefined ? 'bg-red-50/70 text-red-800' : 'text-gray-700'}`}>
-                      <div className="w-10 shrink-0 text-right pr-3 text-gray-400 select-none border-r border-gray-200 mr-3 text-xs opacity-70 flex flex-col justify-center">
-                        {origDefined ? row.num : ''}
+                if (row.type === 'equal') {
+                  return (
+                    <div key={index} className="flex w-full border-b border-gray-100 hover:bg-gray-100/30">
+                      <div className="flex w-1/2 px-2 border-r border-gray-200 text-gray-700">
+                        <div className="w-10 shrink-0 text-right pr-3 text-gray-400 select-none border-r border-gray-200 mr-3 text-xs opacity-70 flex flex-col justify-center">{row.origNum}</div>
+                        <div className="shrink-0 w-4 select-none flex flex-col justify-center"> </div>
+                        <div className="whitespace-pre-wrap flex-1 break-all py-1">{row.orig}</div>
                       </div>
-                      <div className="shrink-0 w-4 font-bold select-none text-red-600/70 flex flex-col justify-center">
-                        {row.isChanged && origDefined ? '-' : ' '}
-                      </div>
-                      <div className="whitespace-pre-wrap flex-1 break-all py-1">
-                        {origDefined ? row.orig : ' '}
+                      <div className="flex w-1/2 px-2 text-gray-700">
+                        <div className="w-10 shrink-0 text-right pr-3 text-gray-400 select-none border-r border-gray-200 mr-3 text-xs opacity-70 flex flex-col justify-center">{row.modNum}</div>
+                        <div className="shrink-0 w-4 select-none flex flex-col justify-center"> </div>
+                        <div className="whitespace-pre-wrap flex-1 break-all py-1">{row.mod}</div>
                       </div>
                     </div>
-
-                    {/* Right Side - Modified */}
-                    <div className={`flex w-1/2 px-2 ${row.isChanged && modDefined ? 'bg-green-50/70 text-green-800' : 'text-gray-700'}`}>
-                      <div className="w-10 shrink-0 text-right pr-3 text-gray-400 select-none border-r border-gray-200 mr-3 text-xs opacity-70 flex flex-col justify-center">
-                        {modDefined ? row.num : ''}
+                  );
+                } else if (row.type === 'remove') {
+                  return (
+                    <div key={index} className="flex w-full border-b border-gray-100">
+                      <div className="flex w-1/2 px-2 border-r border-gray-200 bg-red-50/70 text-red-800">
+                        <div className="w-10 shrink-0 text-right pr-3 text-gray-400 select-none border-r border-gray-200 mr-3 text-xs opacity-70 flex flex-col justify-center">{row.origNum}</div>
+                        <div className="shrink-0 w-4 font-bold select-none text-red-600/70 flex flex-col justify-center">-</div>
+                        <div className="whitespace-pre-wrap flex-1 break-all py-1">{row.orig}</div>
                       </div>
-                      <div className="shrink-0 w-4 font-bold select-none text-green-600/70 flex flex-col justify-center">
-                        {row.isChanged && modDefined ? '+' : ' '}
-                      </div>
-                      <div className="whitespace-pre-wrap flex-1 break-all py-1">
-                        {modDefined ? row.mod : ' '}
+                      <div className="flex w-1/2 px-2 text-gray-300">
+                        <div className="w-10 shrink-0 text-right pr-3 select-none border-r border-gray-200 mr-3 text-xs opacity-70 flex flex-col justify-center"></div>
+                        <div className="shrink-0 w-4 select-none flex flex-col justify-center"> </div>
+                        <div className="whitespace-pre-wrap flex-1 break-all py-1"> </div>
                       </div>
                     </div>
-                  </div>
-                );
+                  );
+                } else {
+                  // type === 'add'
+                  return (
+                    <div key={index} className="flex w-full border-b border-gray-100">
+                      <div className="flex w-1/2 px-2 border-r border-gray-200 text-gray-300">
+                        <div className="w-10 shrink-0 text-right pr-3 select-none border-r border-gray-200 mr-3 text-xs opacity-70 flex flex-col justify-center"></div>
+                        <div className="shrink-0 w-4 select-none flex flex-col justify-center"> </div>
+                        <div className="whitespace-pre-wrap flex-1 break-all py-1"> </div>
+                      </div>
+                      <div className="flex w-1/2 px-2 bg-green-50/70 text-green-800">
+                        <div className="w-10 shrink-0 text-right pr-3 text-gray-400 select-none border-r border-gray-200 mr-3 text-xs opacity-70 flex flex-col justify-center">{row.modNum}</div>
+                        <div className="shrink-0 w-4 font-bold select-none text-green-600/70 flex flex-col justify-center">+</div>
+                        <div className="whitespace-pre-wrap flex-1 break-all py-1">{row.mod}</div>
+                      </div>
+                    </div>
+                  );
+                }
               })}
             </div>
           </div>
@@ -2350,14 +2403,11 @@ export default function App() {
   });
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  const activeTool = TOOLS_CONFIG.find(t => t.id === activeToolId) || TOOLS_CONFIG[0];
-  const ActiveComponent = activeTool.component;
+  useEffect(() => {
+    localStorage.setItem('qa-tools-active-tool', activeToolId);
+  }, [activeToolId]);
 
-  const handleSelectTool = (id) => {
-    setActiveToolId(id);
-    localStorage.setItem('qa-tools-active-tool', id);
-    setIsSidebarOpen(false);
-  };
+  const activeTool = TOOLS_CONFIG.find(t => t.id === activeToolId) || TOOLS_CONFIG[0];
 
   return (
     <div className="min-h-screen bg-gray-50 flex font-sans text-gray-800">
@@ -2401,7 +2451,8 @@ export default function App() {
               <button
                 key={tool.id}
                 onClick={() => {
-                  handleSelectTool(tool.id);
+                  setActiveToolId(tool.id);
+                  setIsSidebarOpen(false);
                 }}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 text-left
                   ${isActive
@@ -2457,10 +2508,19 @@ export default function App() {
               <p className="text-gray-500 text-base">{activeTool.description}</p>
             </div>
 
-            {/* Render Component */}
-            <div className="flex-1 animate-in fade-in duration-500">
-              <ActiveComponent />
-            </div>
+            {/* Render all tool components, hide inactive ones to preserve state */}
+            {TOOLS_CONFIG.map(tool => {
+              const ToolComponent = tool.component;
+              return (
+                <div
+                  key={tool.id}
+                  className="flex-1"
+                  style={{ display: activeToolId === tool.id ? 'block' : 'none' }}
+                >
+                  <ToolComponent />
+                </div>
+              );
+            })}
           </div>
         </div>
 
