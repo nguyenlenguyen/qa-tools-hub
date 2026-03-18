@@ -11,6 +11,7 @@ import {
   Code,
   Copy,
   Download,
+  Eye, EyeOff,
   FileJson,
   Film,
   GitCompare,
@@ -1773,73 +1774,105 @@ const AesTab = () => {
   const [inputText, setInputText] = useState('');
   const [secretKey, setSecretKey] = useState('');
   const [aesMode, setAesMode] = useState('GCM');
+  const [library, setLibrary] = useState('webcrypto');
   const [output, setOutput] = useState('');
   const [error, setError] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
   const [showKey, setShowKey] = useState(false);
 
+  // ── Web Crypto helpers ──────────────────────────────────────
   const getKeyMaterial = async (key) => {
-    const enc = new TextEncoder();
-    return crypto.subtle.importKey('raw', enc.encode(key), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.importKey('raw', new TextEncoder().encode(key), 'PBKDF2', false, ['deriveKey']);
   };
-
-  const deriveKey = async (keyMaterial, salt, mode) => {
+  const deriveKey = async (keyMaterial, salt, alg) => {
     return crypto.subtle.deriveKey(
       { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
       keyMaterial,
-      { name: `AES-${mode}`, length: 256 },
+      { name: `AES-${alg}`, length: 256 },
       false,
-      mode === 'GCM' ? ['encrypt', 'decrypt'] : ['encrypt', 'decrypt']
+      ['encrypt', 'decrypt']
     );
   };
-
   const toHex = (buf) => Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
   const fromHex = (hex) => new Uint8Array(hex.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+
+  const processWebCrypto = async () => {
+    const keyMaterial = await getKeyMaterial(secretKey);
+    if (mode === 'encrypt') {
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const iv = crypto.getRandomValues(new Uint8Array(aesMode === 'GCM' ? 12 : 16));
+      const key = await deriveKey(keyMaterial, salt, aesMode);
+      const encrypted = await crypto.subtle.encrypt(
+        aesMode === 'GCM' ? { name: 'AES-GCM', iv } : { name: 'AES-CBC', iv },
+        key, new TextEncoder().encode(inputText)
+      );
+      return `${toHex(salt)}:${toHex(iv)}:${toHex(encrypted)}`;
+    } else {
+      const parts = inputText.trim().split(':');
+      if (parts.length !== 3) throw new Error('Invalid format. Expected salt:iv:ciphertext (hex).');
+      const salt = fromHex(parts[0]);
+      const iv = fromHex(parts[1]);
+      const ciphertext = fromHex(parts[2]);
+      const key = await deriveKey(keyMaterial, salt, aesMode);
+      const decrypted = await crypto.subtle.decrypt(
+        aesMode === 'GCM' ? { name: 'AES-GCM', iv } : { name: 'AES-CBC', iv },
+        key, ciphertext
+      );
+      return new TextDecoder().decode(decrypted);
+    }
+  };
+
+  // ── Crypto-JS helpers ──────────────────────────────────────
+  const loadCryptoJS = async () => {
+    if (window.CryptoJS) return window.CryptoJS;
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js';
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+    return window.CryptoJS;
+  };
+
+  const processCryptoJS = async () => {
+    const CryptoJS = await loadCryptoJS();
+    const modeMap = { CBC: CryptoJS.mode.CBC, GCM: CryptoJS.mode.CBC }; // CryptoJS doesn't support GCM natively, use CBC
+    const selectedMode = aesMode === 'GCM' ? CryptoJS.mode.CBC : CryptoJS.mode.CBC;
+
+    if (mode === 'encrypt') {
+      const encrypted = CryptoJS.AES.encrypt(inputText, secretKey, {
+        mode: selectedMode,
+        padding: CryptoJS.pad.Pkcs7,
+      });
+      return encrypted.toString(); // produces "U2FsdGVkX1..." format
+    } else {
+      try {
+        const decrypted = CryptoJS.AES.decrypt(inputText.trim(), secretKey, {
+          mode: selectedMode,
+          padding: CryptoJS.pad.Pkcs7,
+        });
+        const result = decrypted.toString(CryptoJS.enc.Utf8);
+        if (!result) throw new Error('Empty result');
+        return result;
+      } catch {
+        throw new Error('Decryption failed. Check your key and input format.');
+      }
+    }
+  };
 
   const handleProcess = async () => {
     if (!inputText.trim()) { setError('Please enter text to process.'); return; }
     if (!secretKey.trim()) { setError('Please enter a secret key.'); return; }
     setError(''); setOutput(''); setIsProcessing(true);
-
     try {
-      const enc = new TextEncoder();
-      const dec = new TextDecoder();
-      const keyMaterial = await getKeyMaterial(secretKey);
-
-      if (mode === 'encrypt') {
-        const salt = crypto.getRandomValues(new Uint8Array(16));
-        const iv = crypto.getRandomValues(new Uint8Array(aesMode === 'GCM' ? 12 : 16));
-        const key = await deriveKey(keyMaterial, salt, aesMode);
-
-        const encrypted = await crypto.subtle.encrypt(
-          aesMode === 'GCM' ? { name: 'AES-GCM', iv } : { name: 'AES-CBC', iv },
-          key,
-          enc.encode(inputText)
-        );
-
-        // Format: hex(salt):hex(iv):hex(ciphertext)
-        const result = `${toHex(salt)}:${toHex(iv)}:${toHex(encrypted)}`;
-        setOutput(result);
-      } else {
-        const parts = inputText.trim().split(':');
-        if (parts.length !== 3) throw new Error('Invalid encrypted format. Expected salt:iv:ciphertext.');
-
-        const salt = fromHex(parts[0]);
-        const iv = fromHex(parts[1]);
-        const ciphertext = fromHex(parts[2]);
-        const key = await deriveKey(keyMaterial, salt, aesMode);
-
-        const decrypted = await crypto.subtle.decrypt(
-          aesMode === 'GCM' ? { name: 'AES-GCM', iv } : { name: 'AES-CBC', iv },
-          key,
-          ciphertext
-        );
-        setOutput(dec.decode(decrypted));
-      }
+      const result = library === 'webcrypto'
+        ? await processWebCrypto()
+        : await processCryptoJS();
+      setOutput(result);
     } catch (err) {
       setError(mode === 'decrypt'
-        ? 'Decryption failed. Check your key, mode, and input format.'
+        ? 'Decryption failed. Check your key, algorithm, and input format.'
         : 'Encryption failed: ' + err.message);
     } finally {
       setIsProcessing(false);
@@ -1847,14 +1880,23 @@ const AesTab = () => {
   };
 
   const handleCopy = () => {
-    if (output) {
-      copyTextToClipboard(output);
-      setIsCopied(true);
-      setTimeout(() => setIsCopied(false), 2000);
-    }
+    if (output) { copyTextToClipboard(output); setIsCopied(true); setTimeout(() => setIsCopied(false), 2000); }
   };
-
   const clear = () => { setInputText(''); setOutput(''); setError(''); };
+
+  const inputPlaceholder = mode === 'encrypt'
+    ? 'Enter text to encrypt...'
+    : library === 'webcrypto'
+      ? 'Paste encrypted string (salt:iv:ciphertext in hex)...'
+      : 'Paste encrypted string (U2FsdGVkX1... format)...';
+
+  const outputFormatNote = mode === 'encrypt' && (
+    <p className="text-xs text-gray-400 px-1">
+      {library === 'webcrypto'
+        ? <>Output format: <span className="font-mono">salt:iv:ciphertext</span> — hex encoded.</>
+        : <>Output format: <span className="font-mono">U2FsdGVkX1...</span> — Crypto-JS standard Base64.</>}
+    </p>
+  );
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
@@ -1864,6 +1906,28 @@ const AesTab = () => {
             <Settings size={18} className="text-gray-400" />
             AES Settings
           </h2>
+
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">Library</label>
+            <div className="flex gap-2">
+              {[
+                { id: 'webcrypto', label: 'Web Crypto' },
+                { id: 'cryptojs', label: 'Crypto-JS' },
+              ].map(l => (
+                <button key={l.id} onClick={() => {
+                  setLibrary(l.id);
+                  if (l.id === 'cryptojs') setAesMode('CBC');
+                  setOutput(''); setError('');
+                }}
+                  className={`flex-1 py-2 px-3 text-sm font-medium rounded-lg border transition-colors ${library === l.id ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                  {l.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400">
+              {library === 'webcrypto' ? 'Native browser API — PBKDF2 key derivation, hex output' : 'Crypto-JS library — compatible with CryptoJS.AES, Base64 output'}
+            </p>
+          </div>
 
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-gray-700">Mode</label>
@@ -1880,31 +1944,31 @@ const AesTab = () => {
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-gray-700">Algorithm</label>
             <div className="flex gap-2">
-              {['GCM', 'CBC'].map(m => (
-                <button key={m} onClick={() => setAesMode(m)}
-                  className={`flex-1 py-2 px-3 text-sm font-medium rounded-lg border transition-colors ${aesMode === m ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
-                  AES-256-{m}
-                </button>
-              ))}
+              {['GCM', 'CBC'].map(m => {
+                const disabled = library === 'cryptojs' && m === 'GCM';
+                return (
+                  <button key={m} onClick={() => !disabled && setAesMode(m)} disabled={disabled}
+                    className={`flex-1 py-2 px-3 text-sm font-medium rounded-lg border transition-colors
+                      ${disabled ? 'bg-gray-50 border-gray-200 text-gray-300 cursor-not-allowed' :
+                        aesMode === m ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                    AES-256-{m}
+                  </button>
+                );
+              })}
             </div>
-            <p className="text-xs text-gray-400">
-              {aesMode === 'GCM' ? 'GCM — recommended, includes authentication tag' : 'CBC — widely compatible, no authentication'}
-            </p>
+            {<p className="text-xs text-gray-400">{aesMode === 'GCM' ? 'GCM — recommended, includes authentication tag' : 'CBC — widely compatible, no authentication'}</p>}
           </div>
 
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-gray-700">Secret Key</label>
             <div className="relative">
-              <input
-                type={showKey ? 'text' : 'password'}
-                value={secretKey}
+              <input type={showKey ? 'text' : 'password'} value={secretKey}
                 onChange={e => setSecretKey(e.target.value)}
                 placeholder="Enter passphrase..."
-                className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-sm"
-              />
+                className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-sm" />
               <button onClick={() => setShowKey(v => !v)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                {showKey ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+                {showKey ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
             </div>
           </div>
@@ -1935,7 +1999,7 @@ const AesTab = () => {
             </button>
           </div>
           <textarea value={inputText} onChange={e => setInputText(e.target.value)}
-            placeholder={mode === 'encrypt' ? 'Enter text to encrypt...' : 'Paste encrypted string (salt:iv:ciphertext)...'}
+            placeholder={inputPlaceholder}
             className="w-full h-36 p-4 resize-none outline-none font-mono text-sm text-gray-800"
             spellCheck="false" />
         </div>
@@ -1963,11 +2027,7 @@ const AesTab = () => {
           </div>
         </div>
 
-        {mode === 'encrypt' && (
-          <p className="text-xs text-gray-400 px-1">
-            Output format: <span className="font-mono">salt:iv:ciphertext</span> — all hex encoded. Share the output with the secret key to decrypt.
-          </p>
-        )}
+        {outputFormatNote}
       </div>
     </div>
   );
@@ -2253,7 +2313,7 @@ const TOOLS_CONFIG = [
   },
   {
     id: 'encoder-tool',
-    name: 'Encode / Decrypt',
+    name: 'Encrypt / Decrypt',
     description: 'Base64 encode/decode and AES-256 encrypt/decrypt with a secret key.',
     icon: Lock,
     component: EncoderTool,
@@ -2284,11 +2344,20 @@ const TOOLS_CONFIG = [
 // MAIN APP: SHELL & LAYOUT
 // ==========================================
 export default function App() {
-  const [activeToolId, setActiveToolId] = useState(TOOLS_CONFIG[0].id);
+  const [activeToolId, setActiveToolId] = useState(() => {
+    const saved = localStorage.getItem('qa-tools-active-tool');
+    return TOOLS_CONFIG.find(t => t.id === saved) ? saved : TOOLS_CONFIG[0].id;
+  });
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const activeTool = TOOLS_CONFIG.find(t => t.id === activeToolId) || TOOLS_CONFIG[0];
   const ActiveComponent = activeTool.component;
+
+  const handleSelectTool = (id) => {
+    setActiveToolId(id);
+    localStorage.setItem('qa-tools-active-tool', id);
+    setIsSidebarOpen(false);
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 flex font-sans text-gray-800">
@@ -2332,8 +2401,7 @@ export default function App() {
               <button
                 key={tool.id}
                 onClick={() => {
-                  setActiveToolId(tool.id);
-                  setIsSidebarOpen(false);
+                  handleSelectTool(tool.id);
                 }}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 text-left
                   ${isActive
