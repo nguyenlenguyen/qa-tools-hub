@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Download, Image as ImageIcon, Settings, AlertCircle, CheckCircle2,
   Menu, X, Type, Code, FileJson, ChevronRight, Copy, Trash2,
   Maximize2, Minimize2, Check, Clock, CalendarDays, RefreshCw, ArrowRightLeft, Palette,
-  Binary, AlignLeft, GitCompare, Network, Search
+  Binary, AlignLeft, GitCompare, Network, Search, Music, Video, Film, Loader2
 } from 'lucide-react';
 
 // ==========================================
@@ -23,9 +23,11 @@ const copyTextToClipboard = (text) => {
 };
 
 // ==========================================
-// TOOL 1: IMAGE GENERATOR
+// TOOL 1: MEDIA GENERATOR (Image + Audio + Video)
 // ==========================================
-const ImageGenerator = () => {
+
+// --- Tab: Image ---
+const ImageTab = () => {
   const [width, setWidth] = useState(500);
   const [height, setHeight] = useState(500);
   const [format, setFormat] = useState('png');
@@ -266,6 +268,723 @@ const ImageGenerator = () => {
           )}
         </div>
       </div>
+    </div>
+  );
+};
+
+// --- Tab: Audio ---
+const AudioTab = () => {
+  const [format, setFormat] = useState('wav');
+  const [duration, setDuration] = useState(5);
+  const [sampleRate, setSampleRate] = useState(44100);
+  const [channels] = useState(2);
+  const [targetSize, setTargetSize] = useState('');
+  const [sizeUnit, setSizeUnit] = useState('MB');
+  const [audioType, setAudioType] = useState('noise');
+
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [progress, setProgress] = useState('');
+  const [resultUrl, setResultUrl] = useState(null);
+  const [resultSize, setResultSize] = useState(0);
+  const [resultName, setResultName] = useState('');
+  const [error, setError] = useState('');
+  const ffmpegRef = useRef(null);
+  const ffmpegLoadedRef = useRef(false);
+
+  const formatBytes = (bytes) => {
+    if (!+bytes) return '0 Bytes';
+    const k = 1024, sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
+  };
+
+  const loadFFmpeg = async () => {
+    if (ffmpegLoadedRef.current) return ffmpegRef.current;
+    setProgress('Loading FFmpeg engine (~30MB, first time only)...');
+    const { FFmpeg } = await import('@ffmpeg/ffmpeg');
+    const { fetchFile } = await import('@ffmpeg/util');
+    const ffmpeg = new FFmpeg();
+    await ffmpeg.load({
+      coreURL: new URL('/ffmpeg-core.js', window.location.origin).href,
+      wasmURL: new URL('/ffmpeg-core.wasm', window.location.origin).href,
+      workerURL: new URL('/ffmpeg-worker.js', window.location.origin).href,
+    });
+    ffmpegRef.current = { ffmpeg, fetchFile };
+    ffmpegLoadedRef.current = true;
+    return ffmpegRef.current;
+  };
+
+  const audioTypeRef = useRef(audioType);
+  const sampleRateRef = useRef(sampleRate);
+  const formatRef = useRef(format);
+  const durationRef = useRef(duration);
+  const targetSizeRef = useRef(targetSize);
+  const sizeUnitRef = useRef(sizeUnit);
+
+  useEffect(() => { audioTypeRef.current = audioType; }, [audioType]);
+  useEffect(() => { sampleRateRef.current = sampleRate; }, [sampleRate]);
+  useEffect(() => { formatRef.current = format; }, [format]);
+  useEffect(() => { durationRef.current = duration; }, [duration]);
+  useEffect(() => { targetSizeRef.current = targetSize; }, [targetSize]);
+  useEffect(() => { sizeUnitRef.current = sizeUnit; }, [sizeUnit]);
+
+  const generateAudio = async () => {
+    setIsGenerating(true);
+    setError('');
+    setResultUrl(null);
+
+    // Read latest values from refs to avoid stale closure
+    const currentAudioType = audioTypeRef.current;
+    const currentSampleRate = parseInt(sampleRateRef.current);
+    const currentFormat = formatRef.current;
+    const currentDuration = parseFloat(durationRef.current);
+    const currentTargetSize = targetSizeRef.current;
+    const currentSizeUnit = sizeUnitRef.current;
+
+    try {
+      setProgress('Generating audio samples...');
+      const ch = 2;
+      const numSamples = Math.floor(currentSampleRate * currentDuration);
+
+      const offlineCtx = new OfflineAudioContext(ch, numSamples, currentSampleRate);
+
+      if (currentAudioType === 'silence') {
+        // silence: render empty buffer
+      } else if (currentAudioType === 'noise') {
+        const bufferSource = offlineCtx.createBufferSource();
+        const noiseBuffer = offlineCtx.createBuffer(ch, numSamples, currentSampleRate);
+        for (let c = 0; c < ch; c++) {
+          const data = noiseBuffer.getChannelData(c);
+          for (let i = 0; i < numSamples; i++) data[i] = Math.random() * 2 - 1;
+        }
+        bufferSource.buffer = noiseBuffer;
+        bufferSource.connect(offlineCtx.destination);
+        bufferSource.start(0);
+      } else if (currentAudioType === 'beep') {
+        for (let b = 0; b < 3; b++) {
+          const osc = offlineCtx.createOscillator();
+          const gain = offlineCtx.createGain();
+          osc.frequency.value = 440;
+          osc.connect(gain);
+          gain.connect(offlineCtx.destination);
+          const t = b * (currentDuration / 3);
+          osc.start(t);
+          osc.stop(t + currentDuration / 6);
+        }
+      } else {
+        // sine, square, sawtooth, triangle
+        const osc = offlineCtx.createOscillator();
+        osc.type = currentAudioType;
+        osc.frequency.setValueAtTime(440, 0);
+        osc.connect(offlineCtx.destination);
+        osc.start(0);
+        osc.stop(currentDuration);
+      }
+
+      const rendered = await offlineCtx.startRendering();
+
+      if (currentFormat === 'wav') {
+        setProgress('Encoding WAV...');
+        const numCh = rendered.numberOfChannels;
+        const length = rendered.length;
+        const bitsPerSample = 16;
+        const byteRate = currentSampleRate * numCh * bitsPerSample / 8;
+        const blockAlign = numCh * bitsPerSample / 8;
+        const dataSize = length * numCh * bitsPerSample / 8;
+        const buffer = new ArrayBuffer(44 + dataSize);
+        const view = new DataView(buffer);
+        const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+        writeStr(0, 'RIFF'); view.setUint32(4, 36 + dataSize, true);
+        writeStr(8, 'WAVE'); writeStr(12, 'fmt ');
+        view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+        view.setUint16(22, numCh, true); view.setUint32(24, currentSampleRate, true);
+        view.setUint32(28, byteRate, true); view.setUint16(32, blockAlign, true);
+        view.setUint16(34, bitsPerSample, true); writeStr(36, 'data');
+        view.setUint32(40, dataSize, true);
+        let offset = 44;
+        for (let i = 0; i < length; i++) {
+          for (let c = 0; c < numCh; c++) {
+            const s = Math.max(-1, Math.min(1, rendered.getChannelData(c)[i]));
+            view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            offset += 2;
+          }
+        }
+        let finalBuffer = buffer;
+        if (currentTargetSize && parseFloat(currentTargetSize) > 0) {
+          const multiplier = currentSizeUnit === 'MB' ? 1024 * 1024 : 1024;
+          const targetBytes = Math.floor(parseFloat(currentTargetSize) * multiplier);
+          if (targetBytes > buffer.byteLength) {
+            const padding = new Uint8Array(targetBytes - buffer.byteLength);
+            finalBuffer = new Blob([buffer, padding], { type: 'audio/wav' });
+          }
+        }
+        const blob = finalBuffer instanceof Blob ? finalBuffer : new Blob([finalBuffer], { type: 'audio/wav' });
+        const url = URL.createObjectURL(blob);
+        setResultUrl(url); setResultSize(blob.size);
+        setResultName(`qa_audio_${currentDuration}s_${formatBytes(blob.size).replace(' ', '')}.wav`);
+      } else {
+        setProgress('Loading FFmpeg...');
+        const { ffmpeg, fetchFile } = await loadFFmpeg();
+        setProgress('Encoding with FFmpeg...');
+        const numCh = rendered.numberOfChannels;
+        const length = rendered.length;
+        const pcmData = new Float32Array(length * numCh);
+        for (let i = 0; i < length; i++) {
+          for (let c = 0; c < numCh; c++) {
+            pcmData[i * numCh + c] = rendered.getChannelData(c)[i];
+          }
+        }
+        const pcmBlob = new Blob([pcmData.buffer], { type: 'application/octet-stream' });
+        await ffmpeg.writeFile('input.pcm', await fetchFile(pcmBlob));
+        const codecMap = { mp3: 'libmp3lame', aac: 'aac', ogg: 'libvorbis', flac: 'flac' };
+        const mimeMap = { mp3: 'audio/mpeg', aac: 'audio/aac', ogg: 'audio/ogg', flac: 'audio/flac' };
+        const codec = codecMap[currentFormat] || 'libmp3lame';
+        await ffmpeg.exec([
+          '-f', 'f32le', '-ar', String(currentSampleRate), '-ac', String(numCh),
+          '-i', 'input.pcm', '-c:a', codec, '-b:a', '192k',
+          `output.${currentFormat}`
+        ]);
+        const data = await ffmpeg.readFile(`output.${currentFormat}`);
+        let blob = new Blob([data.buffer], { type: mimeMap[currentFormat] || 'audio/mpeg' });
+        if (currentTargetSize && parseFloat(currentTargetSize) > 0) {
+          const multiplier = currentSizeUnit === 'MB' ? 1024 * 1024 : 1024;
+          const targetBytes = Math.floor(parseFloat(currentTargetSize) * multiplier);
+          if (targetBytes > blob.size) {
+            blob = new Blob([blob, new Uint8Array(targetBytes - blob.size)], { type: blob.type });
+          }
+        }
+        const url = URL.createObjectURL(blob);
+        setResultUrl(url); setResultSize(blob.size);
+        setResultName(`qa_audio_${currentDuration}s_${formatBytes(blob.size).replace(' ', '')}.${currentFormat}`);
+      }
+      setProgress('');
+    } catch (err) {
+      console.error(err);
+      setError('Generation failed: ' + err.message);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleDownload = () => {
+    if (!resultUrl) return;
+    const a = document.createElement('a');
+    a.href = resultUrl; a.download = resultName;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+  };
+
+  const FORMATS = ['wav', 'mp3', 'aac', 'ogg', 'flac'];
+  const AUDIO_TYPES = [
+    { value: 'sine', label: 'Sine Wave' },
+    { value: 'square', label: 'Square Wave' },
+    { value: 'sawtooth', label: 'Sawtooth' },
+    { value: 'triangle', label: 'Triangle' },
+    { value: 'noise', label: 'White Noise' },
+    { value: 'beep', label: 'Beep x3' },
+    { value: 'silence', label: 'Silence' },
+  ];
+
+  return (
+    <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+      <div className="xl:col-span-5 space-y-6">
+        <div className="bg-white rounded-2xl shadow-sm p-6 border border-gray-100 space-y-5">
+          <h2 className="text-lg font-semibold flex items-center gap-2 border-b pb-3">
+            <Settings size={18} className="text-gray-400" />
+            Audio Settings
+          </h2>
+
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">Format</label>
+            <div className="flex flex-wrap gap-2">
+              {FORMATS.map(f => (
+                <button key={f} onClick={() => setFormat(f)}
+                  className={`py-1.5 px-3 text-sm font-medium rounded-lg border transition-colors ${format === f ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                  {f.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">Audio Content</label>
+            <select value={audioType} onChange={e => setAudioType(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white">
+              {AUDIO_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">Sample Rate</label>
+            <div className="flex flex-wrap gap-2">
+              {[8000, 22050, 44100, 48000].map(sr => (
+                <button key={sr} onClick={() => setSampleRate(sr)}
+                  className={`py-1.5 px-3 text-sm font-medium rounded-lg border transition-colors ${sampleRate === sr ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                  {sr >= 1000 ? `${sr / 1000}kHz` : `${sr}Hz`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-gray-700">Duration (seconds)</label>
+              <input type="number" value={duration} min="1" max="300"
+                onChange={e => setDuration(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-gray-700">Target Size (Optional)</label>
+              <div className="flex gap-2">
+                <input type="number" placeholder="Original" value={targetSize}
+                  onChange={e => setTargetSize(e.target.value)}
+                  className="w-full min-w-0 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                <select value={sizeUnit} onChange={e => setSizeUnit(e.target.value)}
+                  className="w-20 shrink-0 px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white">
+                  <option value="KB">KB</option>
+                  <option value="MB">MB</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <button onClick={generateAudio} disabled={isGenerating}
+            className="w-full py-3 px-4 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-colors focus:ring-4 focus:ring-blue-200 disabled:opacity-70 flex justify-center items-center gap-2 mt-2">
+            {isGenerating ? <><Loader2 size={18} className="animate-spin" /> Processing...</> : <><Music size={18} /> Generate Audio</>}
+          </button>
+        </div>
+      </div>
+
+      <div className="xl:col-span-7 space-y-6">
+        <div className="bg-white rounded-2xl shadow-sm p-6 border border-gray-100 flex flex-col h-full">
+          <h2 className="text-lg font-semibold flex items-center gap-2 border-b pb-3 mb-4">
+            <CheckCircle2 size={18} className="text-green-500" />
+            Result
+          </h2>
+
+          {error && (
+            <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg flex items-start gap-2 text-sm">
+              <AlertCircle size={16} className="mt-0.5 shrink-0" /><p>{error}</p>
+            </div>
+          )}
+
+          <div className="flex-1 bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center p-6 min-h-[260px]">
+            {isGenerating ? (
+              <div className="text-center space-y-3">
+                <Loader2 size={36} className="animate-spin text-blue-500 mx-auto" />
+                <p className="text-sm text-gray-500">{progress}</p>
+              </div>
+            ) : resultUrl ? (
+              <div className="w-full space-y-4">
+                <div className="flex items-center justify-center gap-3 p-4 bg-blue-50 rounded-xl border border-blue-100">
+                  <Music size={28} className="text-blue-500 shrink-0" />
+                  <div>
+                    <p className="font-medium text-gray-800 text-sm">{resultName}</p>
+                    <p className="text-xs text-gray-500">{formatBytes(resultSize)}</p>
+                  </div>
+                </div>
+                <audio controls src={resultUrl} className="w-full" />
+              </div>
+            ) : (
+              <div className="text-center text-gray-400 space-y-2">
+                <Music size={36} className="mx-auto opacity-30" />
+                <p className="text-sm">Configure settings and click Generate</p>
+              </div>
+            )}
+          </div>
+
+          {resultUrl && !isGenerating && (
+            <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-4 bg-gray-50 p-4 rounded-xl border border-gray-200">
+              <div className="flex flex-wrap gap-4">
+                <div className="space-y-1">
+                  <p className="text-xs text-gray-500 uppercase font-semibold">Format</p>
+                  <p className="font-medium text-gray-900 uppercase">.{format}</p>
+                </div>
+                <div className="w-px bg-gray-300 hidden sm:block"></div>
+                <div className="space-y-1">
+                  <p className="text-xs text-gray-500 uppercase font-semibold">Duration</p>
+                  <p className="font-medium text-gray-900">{duration}s</p>
+                </div>
+                <div className="w-px bg-gray-300 hidden sm:block"></div>
+                <div className="space-y-1">
+                  <p className="text-xs text-gray-500 uppercase font-semibold">File Size</p>
+                  <p className="font-medium text-gray-900">{formatBytes(resultSize)}</p>
+                </div>
+              </div>
+              <button onClick={handleDownload}
+                className="w-full sm:w-auto py-2.5 px-6 bg-gray-900 text-white font-medium rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2">
+                <Download size={18} /> Download
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- Tab: Video ---
+const VideoTab = () => {
+  const [format, setFormat] = useState('mp4');
+  const [width, setWidth] = useState(1280);
+  const [height, setHeight] = useState(720);
+  const [selectedPreset, setSelectedPreset] = useState('720p');
+  const [duration, setDuration] = useState(5);
+  const [fps, setFps] = useState(30);
+  const [targetSize, setTargetSize] = useState('');
+  const [sizeUnit, setSizeUnit] = useState('MB');
+  const [customText, setCustomText] = useState('QA TEST VIDEO');
+
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [progress, setProgress] = useState('');
+  const [resultUrl, setResultUrl] = useState(null);
+  const [resultSize, setResultSize] = useState(0);
+  const [resultName, setResultName] = useState('');
+  const [error, setError] = useState('');
+  const ffmpegRef = useRef(null);
+  const ffmpegLoadedRef = useRef(false);
+
+  const formatBytes = (bytes) => {
+    if (!+bytes) return '0 Bytes';
+    const k = 1024, sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
+  };
+
+  const loadFFmpeg = async () => {
+    if (ffmpegLoadedRef.current) return ffmpegRef.current;
+    setProgress('Loading FFmpeg engine (~30MB, first time only)...');
+    const { FFmpeg } = await import('@ffmpeg/ffmpeg');
+    const { fetchFile } = await import('@ffmpeg/util');
+    const ffmpeg = new FFmpeg();
+    await ffmpeg.load({
+      coreURL: new URL('/ffmpeg-core.js', window.location.origin).href,
+      wasmURL: new URL('/ffmpeg-core.wasm', window.location.origin).href,
+      workerURL: new URL('/ffmpeg-worker.js', window.location.origin).href,
+    });
+    ffmpegRef.current = { ffmpeg, fetchFile };
+    ffmpegLoadedRef.current = true;
+    return ffmpegRef.current;
+  };
+
+  const generateVideo = async () => {
+    setIsGenerating(true);
+    setError('');
+    setResultUrl(null);
+
+    try {
+      const w = parseInt(width) || 1280;
+      const h = parseInt(height) || 720;
+      const dur = parseFloat(duration) || 5;
+      const fpsVal = parseInt(fps) || 30;
+      const totalFrames = Math.ceil(dur * fpsVal);
+
+      // Render frames to canvas
+      setProgress(`Rendering ${totalFrames} frames on canvas...`);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+
+      const { ffmpeg, fetchFile } = await loadFFmpeg();
+      setProgress('Uploading frames to FFmpeg...');
+
+      for (let f = 0; f < totalFrames; f++) {
+        const t = f / fpsVal;
+
+        // Draw frame - always color bars
+        const barW = w / 7;
+        const colors = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899'];
+        colors.forEach((c, i) => { ctx.fillStyle = c; ctx.fillRect(i * barW, 0, barW, h); });
+
+        // Overlay text
+        const fs = Math.max(16, Math.min(w, h) / 12);
+        // Semi-transparent dark band for readability
+        ctx.fillStyle = 'rgba(0,0,0,0.45)';
+        ctx.fillRect(0, h / 2 - fs * 1.4, w, fs * 3);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `bold ${fs}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(customText || 'QA TEST VIDEO', w / 2, h / 2 - fs * 0.4);
+        ctx.font = `${fs * 0.55}px monospace`;
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        ctx.fillText(`${w} × ${h} • ${format.toUpperCase()} • ${t.toFixed(2)}s`, w / 2, h / 2 + fs * 0.8);
+
+        // Timecode bar
+        const progress_ratio = f / (totalFrames - 1 || 1);
+        ctx.fillStyle = 'rgba(0,0,0,0.4)';
+        ctx.fillRect(0, h - 8, w, 8);
+        ctx.fillStyle = '#3b82f6';
+        ctx.fillRect(0, h - 8, w * progress_ratio, 8);
+
+        // Convert frame to PNG blob
+        const frameBlob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+        const frameData = await fetchFile(frameBlob);
+        const frameNum = String(f).padStart(5, '0');
+        await ffmpeg.writeFile(`frame${frameNum}.png`, frameData);
+
+        if (f % 10 === 0) setProgress(`Uploading frames: ${f + 1}/${totalFrames}`);
+      }
+
+      setProgress('Encoding video with FFmpeg...');
+
+      const codecMap = {
+        mp4: ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast', '-crf', '23'],
+        mov: ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast', '-crf', '23'],
+        avi: ['-c:v', 'libx264', '-pix_fmt', 'yuv420p'],
+        mkv: ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '23'],
+        webm: ['-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', '30'],
+      };
+      const mimeMap = {
+        mp4: 'video/mp4', mov: 'video/quicktime',
+        avi: 'video/x-msvideo', mkv: 'video/x-matroska', webm: 'video/webm'
+      };
+
+      const codecArgs = codecMap[format] || codecMap.mp4;
+      await ffmpeg.exec([
+        '-framerate', String(fpsVal),
+        '-i', 'frame%05d.png',
+        ...codecArgs,
+        '-r', String(fpsVal),
+        `output.${format}`
+      ]);
+
+      const data = await ffmpeg.readFile(`output.${format}`);
+      let blob = new Blob([data.buffer], { type: mimeMap[format] || 'video/mp4' });
+
+      if (targetSize && parseFloat(targetSize) > 0) {
+        const multiplier = sizeUnit === 'MB' ? 1024 * 1024 : 1024;
+        const targetBytes = Math.floor(parseFloat(targetSize) * multiplier);
+        if (targetBytes > blob.size) {
+          const padding = new Uint8Array(targetBytes - blob.size);
+          blob = new Blob([blob, padding], { type: blob.type });
+        }
+      }
+
+      const url = URL.createObjectURL(blob);
+      const name = `qa_video_${w}x${h}_${dur}s_${formatBytes(blob.size).replace(' ', '')}.${format}`;
+      setResultUrl(url); setResultSize(blob.size); setResultName(name);
+      setProgress('');
+    } catch (err) {
+      console.error(err);
+      setError('Generation failed: ' + err.message);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleDownload = () => {
+    if (!resultUrl) return;
+    const a = document.createElement('a');
+    a.href = resultUrl; a.download = resultName;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+  };
+
+  const FORMATS = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
+  const PRESETS = [
+    { label: '360p', w: 640, h: 360 },
+    { label: '480p', w: 854, h: 480 },
+    { label: '720p', w: 1280, h: 720 },
+    { label: '1080p', w: 1920, h: 1080 },
+    { label: 'Custom', w: null, h: null },
+  ];
+
+  return (
+    <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+      <div className="xl:col-span-5 space-y-6">
+        <div className="bg-white rounded-2xl shadow-sm p-6 border border-gray-100 space-y-5">
+          <h2 className="text-lg font-semibold flex items-center gap-2 border-b pb-3">
+            <Settings size={18} className="text-gray-400" />
+            Video Settings
+          </h2>
+
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">Format</label>
+            <div className="flex flex-wrap gap-2">
+              {FORMATS.map(f => (
+                <button key={f} onClick={() => setFormat(f)}
+                  className={`py-1.5 px-3 text-sm font-medium rounded-lg border transition-colors ${format === f ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                  {f.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-gray-700">Resolution</label>
+            <div className="flex flex-wrap gap-2">
+              {PRESETS.map(p => (
+                <button key={p.label}
+                  onClick={() => {
+                    setSelectedPreset(p.label);
+                    if (p.w) { setWidth(p.w); setHeight(p.h); }
+                  }}
+                  className={`py-1.5 px-3 text-sm font-medium rounded-lg border transition-colors ${selectedPreset === p.label ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs text-gray-500">Width (px)</label>
+                <input type="number" value={width} onChange={e => setWidth(e.target.value)}
+                  disabled={selectedPreset !== 'Custom'}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-50 disabled:text-gray-400" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-gray-500">Height (px)</label>
+                <input type="number" value={height} onChange={e => setHeight(e.target.value)}
+                  disabled={selectedPreset !== 'Custom'}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-50 disabled:text-gray-400" />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-gray-700">Duration (seconds)</label>
+              <input type="number" value={duration} min="1" max="30"
+                onChange={e => setDuration(Math.min(30, Math.max(1, parseInt(e.target.value) || 1)))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-gray-700">Frame Rate (FPS)</label>
+              <select value={fps} onChange={e => setFps(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white">
+                {[15, 24, 30, 60].map(f => <option key={f} value={f}>{f} fps</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">Custom Text</label>
+            <input type="text" value={customText} onChange={e => setCustomText(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">Target File Size (Optional)</label>
+            <div className="flex gap-2">
+              <input type="number" placeholder="Original" value={targetSize}
+                onChange={e => setTargetSize(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+              <select value={sizeUnit} onChange={e => setSizeUnit(e.target.value)}
+                className="w-20 shrink-0 px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white">
+                <option value="KB">KB</option>
+                <option value="MB">MB</option>
+              </select>
+            </div>
+          </div>
+
+          <button onClick={generateVideo} disabled={isGenerating}
+            className="w-full py-3 px-4 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-colors focus:ring-4 focus:ring-blue-200 disabled:opacity-70 flex justify-center items-center gap-2 mt-2">
+            {isGenerating ? <><Loader2 size={18} className="animate-spin" /> Processing...</> : <><Film size={18} /> Generate Video</>}
+          </button>
+        </div>
+      </div>
+
+      <div className="xl:col-span-7 space-y-6">
+        <div className="bg-white rounded-2xl shadow-sm p-6 border border-gray-100 flex flex-col h-full">
+          <h2 className="text-lg font-semibold flex items-center gap-2 border-b pb-3 mb-4">
+            <CheckCircle2 size={18} className="text-green-500" />
+            Result
+          </h2>
+
+          {error && (
+            <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg flex items-start gap-2 text-sm">
+              <AlertCircle size={16} className="mt-0.5 shrink-0" /><p>{error}</p>
+            </div>
+          )}
+
+          <div className="flex-1 bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center p-6 min-h-[260px]">
+            {isGenerating ? (
+              <div className="text-center space-y-3">
+                <Loader2 size={36} className="animate-spin text-blue-500 mx-auto" />
+                <p className="text-sm text-gray-500 max-w-xs text-center">{progress}</p>
+              </div>
+            ) : resultUrl ? (
+              <video controls src={resultUrl} className="max-w-full max-h-[380px] rounded-lg shadow-md" />
+            ) : (
+              <div className="text-center text-gray-400 space-y-2">
+                <Film size={36} className="mx-auto opacity-30" />
+                <p className="text-sm">Configure settings and click Generate</p>
+              </div>
+            )}
+          </div>
+
+          {resultUrl && !isGenerating && (
+            <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-4 bg-gray-50 p-4 rounded-xl border border-gray-200">
+              <div className="flex flex-wrap gap-4">
+                <div className="space-y-1">
+                  <p className="text-xs text-gray-500 uppercase font-semibold">Format</p>
+                  <p className="font-medium text-gray-900 uppercase">.{format}</p>
+                </div>
+                <div className="w-px bg-gray-300 hidden sm:block"></div>
+                <div className="space-y-1">
+                  <p className="text-xs text-gray-500 uppercase font-semibold">Resolution</p>
+                  <p className="font-medium text-gray-900">{width}×{height}</p>
+                </div>
+                <div className="w-px bg-gray-300 hidden sm:block"></div>
+                <div className="space-y-1">
+                  <p className="text-xs text-gray-500 uppercase font-semibold">Duration</p>
+                  <p className="font-medium text-gray-900">{duration}s</p>
+                </div>
+                <div className="w-px bg-gray-300 hidden sm:block"></div>
+                <div className="space-y-1">
+                  <p className="text-xs text-gray-500 uppercase font-semibold">File Size</p>
+                  <p className="font-medium text-gray-900">{formatBytes(resultSize)}</p>
+                </div>
+              </div>
+              <button onClick={handleDownload}
+                className="w-full sm:w-auto py-2.5 px-6 bg-gray-900 text-white font-medium rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2">
+                <Download size={18} /> Download
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- Main MediaGenerator wrapper with tabs ---
+const MediaGenerator = () => {
+  const [activeTab, setActiveTab] = useState('image');
+
+  const tabs = [
+    { id: 'image', label: 'Image', icon: ImageIcon },
+    { id: 'audio', label: 'Audio', icon: Music },
+    { id: 'video', label: 'Video', icon: Film },
+  ];
+
+  return (
+    <div className="space-y-6">
+      {/* Tab switcher */}
+      <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
+        {tabs.map(tab => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${isActive
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+                }`}
+            >
+              <Icon size={16} />
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Keep all tabs mounted to prevent cancelling ongoing generation */}
+      <div style={{ display: activeTab === 'image' ? 'block' : 'none' }}><ImageTab /></div>
+      <div style={{ display: activeTab === 'audio' ? 'block' : 'none' }}><AudioTab /></div>
+      <div style={{ display: activeTab === 'video' ? 'block' : 'none' }}><VideoTab /></div>
     </div>
   );
 };
@@ -1249,11 +1968,11 @@ const TextDiffChecker = () => {
 // ==========================================
 const TOOLS_CONFIG = [
   {
-    id: 'image-generator',
-    name: 'Image Generator',
-    description: 'Generate test images with custom dimensions, formats, and size padding.',
-    icon: ImageIcon,
-    component: ImageGenerator,
+    id: 'media-generator',
+    name: 'Media Generator',
+    description: 'Generate test images, audio files, and videos with custom dimensions, formats, and sizes.',
+    icon: Film,
+    component: MediaGenerator,
     color: 'text-blue-500',
     bgColor: 'bg-blue-50'
   },
