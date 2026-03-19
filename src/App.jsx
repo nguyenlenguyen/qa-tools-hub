@@ -1,4 +1,3 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   AlertCircle,
   AlignLeft,
@@ -29,6 +28,7 @@ import {
   Type,
   X
 } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 // ==========================================
 // UTILS
@@ -75,12 +75,19 @@ const ImageTab = () => {
 
   const [previewUrl, setPreviewUrl] = useState(null);
   const [actualSize, setActualSize] = useState(0);
+  const [resultMeta, setResultMeta] = useState(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState('');
 
   const canvasRef = useRef(null);
+  const previewUrlRef = useRef(null);
 
-  // formatBytes is now a shared utility defined at the top of the file
+  // Cleanup Object URL on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    };
+  }, []);
 
   const generateImage = () => {
     setIsGenerating(true);
@@ -138,11 +145,12 @@ const ImageTab = () => {
           }
         }
 
-        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
         const newUrl = URL.createObjectURL(finalBlob);
-
+        previewUrlRef.current = newUrl;
         setPreviewUrl(newUrl);
         setActualSize(finalBlob.size);
+        setResultMeta({ width: canvas.width, height: canvas.height, format, size: finalBlob.size, hasTargetSize: !!(targetSize && parseFloat(targetSize) > 0) });
         setIsGenerating(false);
 
       }, mimeType, 0.9);
@@ -203,7 +211,7 @@ const ImageTab = () => {
             <div className="col-span-12 sm:col-span-6 space-y-1.5">
               <label className="text-sm font-medium text-gray-700">Size (Optional)</label>
               <div className="flex gap-2">
-                <input type="number" placeholder="Original" value={targetSize} onChange={(e) => setTargetSize(e.target.value)} className="w-full min-w-0 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" />
+                <input type="number" value={targetSize} onChange={(e) => setTargetSize(e.target.value)} className="w-full min-w-0 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" />
                 <select value={sizeUnit} onChange={(e) => setSizeUnit(e.target.value)} className="w-20 shrink-0 px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white transition-shadow">
                   <option value="KB">KB</option>
                   <option value="MB">MB</option>
@@ -270,23 +278,23 @@ const ImageTab = () => {
             )}
           </div>
 
-          {previewUrl && (
+          {previewUrl && resultMeta && (
             <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-4 bg-gray-50 p-4 rounded-xl border border-gray-200">
               <div className="flex flex-wrap gap-4 w-full sm:w-auto">
                 <div className="space-y-1">
-                  <p className="text-xs text-gray-500 uppercase font-semibold">Actual Size</p>
-                  <p className="font-medium text-gray-900">{width}x{height} px</p>
+                  <p className="text-xs text-gray-500 uppercase font-semibold">Dimensions</p>
+                  <p className="font-medium text-gray-900">{resultMeta.width}x{resultMeta.height} px</p>
                 </div>
                 <div className="w-px bg-gray-300 hidden sm:block"></div>
                 <div className="space-y-1">
                   <p className="text-xs text-gray-500 uppercase font-semibold">Format</p>
-                  <p className="font-medium text-gray-900 uppercase">.{format}</p>
+                  <p className="font-medium text-gray-900 uppercase">.{resultMeta.format}</p>
                 </div>
                 <div className="w-px bg-gray-300 hidden sm:block"></div>
                 <div className="space-y-1">
                   <p className="text-xs text-gray-500 uppercase font-semibold">File Size</p>
-                  <p className={`font-medium ${targetSize ? 'text-blue-600' : 'text-gray-900'}`}>
-                    {formatBytes(actualSize)}
+                  <p className={`font-medium ${resultMeta.hasTargetSize ? 'text-blue-600' : 'text-gray-900'}`}>
+                    {formatBytes(resultMeta.size)}
                   </p>
                 </div>
               </div>
@@ -308,7 +316,6 @@ const AudioTab = () => {
   const [format, setFormat] = useState('wav');
   const [duration, setDuration] = useState(5);
   const [sampleRate, setSampleRate] = useState(44100);
-  const [channels] = useState(2);
   const [targetSize, setTargetSize] = useState('');
   const [sizeUnit, setSizeUnit] = useState('MB');
   const [audioType, setAudioType] = useState('noise');
@@ -318,6 +325,7 @@ const AudioTab = () => {
   const [resultUrl, setResultUrl] = useState(null);
   const [resultSize, setResultSize] = useState(0);
   const [resultName, setResultName] = useState('');
+  const [resultMeta, setResultMeta] = useState(null);
   const [error, setError] = useState('');
   const ffmpegRef = useRef(null);
   const ffmpegLoadedRef = useRef(false);
@@ -440,6 +448,8 @@ const AudioTab = () => {
           if (targetBytes > buffer.byteLength) {
             const padding = new Uint8Array(targetBytes - buffer.byteLength);
             finalBuffer = new Blob([buffer, padding], { type: 'audio/wav' });
+          } else if (targetBytes < buffer.byteLength) {
+            setError(`Warning: Original size (${formatBytes(buffer.byteLength)}) is already larger than target size.`);
           }
         }
         const blob = finalBuffer instanceof Blob ? finalBuffer : new Blob([finalBuffer], { type: 'audio/wav' });
@@ -447,6 +457,7 @@ const AudioTab = () => {
         resultUrlRef.current = url;
         setResultUrl(url); setResultSize(blob.size);
         setResultName(`qa_audio_${currentDuration}s_${formatBytes(blob.size).replace(' ', '')}.wav`);
+        setResultMeta({ format: 'wav', duration: currentDuration, size: blob.size });
       } else {
         setProgress('Loading FFmpeg...');
         const { ffmpeg, fetchFile } = await loadFFmpeg();
@@ -470,18 +481,26 @@ const AudioTab = () => {
           `output.${currentFormat}`
         ]);
         const data = await ffmpeg.readFile(`output.${currentFormat}`);
+
+        // Cleanup FFmpeg virtual filesystem to free WASM memory
+        try { await ffmpeg.deleteFile('input.pcm'); } catch { }
+        try { await ffmpeg.deleteFile(`output.${currentFormat}`); } catch { }
+
         let blob = new Blob([data.buffer], { type: mimeMap[currentFormat] || 'audio/mpeg' });
         if (currentTargetSize && parseFloat(currentTargetSize) > 0) {
           const multiplier = currentSizeUnit === 'MB' ? 1024 * 1024 : 1024;
           const targetBytes = Math.floor(parseFloat(currentTargetSize) * multiplier);
           if (targetBytes > blob.size) {
             blob = new Blob([blob, new Uint8Array(targetBytes - blob.size)], { type: blob.type });
+          } else if (targetBytes < blob.size) {
+            setError(`Warning: Original size (${formatBytes(blob.size)}) is already larger than target size.`);
           }
         }
         const url = URL.createObjectURL(blob);
         resultUrlRef.current = url;
         setResultUrl(url); setResultSize(blob.size);
         setResultName(`qa_audio_${currentDuration}s_${formatBytes(blob.size).replace(' ', '')}.${currentFormat}`);
+        setResultMeta({ format: currentFormat, duration: currentDuration, size: blob.size });
       }
       setProgress('');
     } catch (err) {
@@ -560,9 +579,9 @@ const AudioTab = () => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-gray-700">Target Size (Optional)</label>
+              <label className="text-sm font-medium text-gray-700">Size (Optional)</label>
               <div className="flex gap-2">
-                <input type="number" placeholder="Original" value={targetSize}
+                <input type="number" value={targetSize}
                   onChange={e => setTargetSize(e.target.value)}
                   className="w-full min-w-0 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
                 <select value={sizeUnit} onChange={e => setSizeUnit(e.target.value)}
@@ -619,22 +638,22 @@ const AudioTab = () => {
             )}
           </div>
 
-          {resultUrl && !isGenerating && (
+          {resultUrl && !isGenerating && resultMeta && (
             <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-4 bg-gray-50 p-4 rounded-xl border border-gray-200">
               <div className="flex flex-wrap gap-4">
                 <div className="space-y-1">
                   <p className="text-xs text-gray-500 uppercase font-semibold">Format</p>
-                  <p className="font-medium text-gray-900 uppercase">.{format}</p>
+                  <p className="font-medium text-gray-900 uppercase">.{resultMeta.format}</p>
                 </div>
                 <div className="w-px bg-gray-300 hidden sm:block"></div>
                 <div className="space-y-1">
                   <p className="text-xs text-gray-500 uppercase font-semibold">Duration</p>
-                  <p className="font-medium text-gray-900">{duration}s</p>
+                  <p className="font-medium text-gray-900">{resultMeta.duration}s</p>
                 </div>
                 <div className="w-px bg-gray-300 hidden sm:block"></div>
                 <div className="space-y-1">
                   <p className="text-xs text-gray-500 uppercase font-semibold">File Size</p>
-                  <p className="font-medium text-gray-900">{formatBytes(resultSize)}</p>
+                  <p className="font-medium text-gray-900">{formatBytes(resultMeta.size)}</p>
                 </div>
               </div>
               <button onClick={handleDownload}
@@ -656,7 +675,7 @@ const VideoTab = () => {
   const [height, setHeight] = useState(720);
   const [selectedPreset, setSelectedPreset] = useState('720p');
   const [duration, setDuration] = useState(5);
-  const [fps, setFps] = useState(30);
+  const fps = 30;
   const [targetSize, setTargetSize] = useState('');
   const [sizeUnit, setSizeUnit] = useState('MB');
   const [customText, setCustomText] = useState('QA TEST VIDEO');
@@ -666,6 +685,7 @@ const VideoTab = () => {
   const [resultUrl, setResultUrl] = useState(null);
   const [resultSize, setResultSize] = useState(0);
   const [resultName, setResultName] = useState('');
+  const [resultMeta, setResultMeta] = useState(null);
   const [error, setError] = useState('');
   const ffmpegRef = useRef(null);
   const ffmpegLoadedRef = useRef(false);
@@ -799,6 +819,8 @@ const VideoTab = () => {
         if (targetBytes > blob.size) {
           const padding = new Uint8Array(targetBytes - blob.size);
           blob = new Blob([blob, padding], { type: blob.type });
+        } else if (targetBytes < blob.size) {
+          setError(`Warning: Original size (${formatBytes(blob.size)}) is already larger than target size.`);
         }
       }
 
@@ -806,6 +828,7 @@ const VideoTab = () => {
       resultUrlRef.current = url;
       const name = `qa_video_${w}x${h}_${dur}s_${formatBytes(blob.size).replace(' ', '')}.${format}`;
       setResultUrl(url); setResultSize(blob.size); setResultName(name);
+      setResultMeta({ format, width: w, height: h, duration: dur, size: blob.size });
       setProgress('');
     } catch (err) {
       console.error(err);
@@ -891,11 +914,17 @@ const VideoTab = () => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-gray-700">Frame Rate (FPS)</label>
-              <select value={fps} onChange={e => setFps(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white">
-                {[15, 24, 30, 60].map(f => <option key={f} value={f}>{f} fps</option>)}
-              </select>
+              <label className="text-sm font-medium text-gray-700">Size (Optional)</label>
+              <div className="flex gap-2">
+                <input type="number" value={targetSize}
+                  onChange={e => setTargetSize(e.target.value)}
+                  className="w-full min-w-0 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                <select value={sizeUnit} onChange={e => setSizeUnit(e.target.value)}
+                  className="w-20 shrink-0 px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white">
+                  <option value="KB">KB</option>
+                  <option value="MB">MB</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -903,20 +932,6 @@ const VideoTab = () => {
             <label className="text-sm font-medium text-gray-700">Custom Text</label>
             <input type="text" value={customText} onChange={e => setCustomText(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-gray-700">Target File Size (Optional)</label>
-            <div className="flex gap-2">
-              <input type="number" placeholder="Original" value={targetSize}
-                onChange={e => setTargetSize(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
-              <select value={sizeUnit} onChange={e => setSizeUnit(e.target.value)}
-                className="w-20 shrink-0 px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white">
-                <option value="KB">KB</option>
-                <option value="MB">MB</option>
-              </select>
-            </div>
           </div>
 
           <button onClick={generateVideo} disabled={isGenerating}
@@ -955,27 +970,27 @@ const VideoTab = () => {
             )}
           </div>
 
-          {resultUrl && !isGenerating && (
+          {resultUrl && !isGenerating && resultMeta && (
             <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-4 bg-gray-50 p-4 rounded-xl border border-gray-200">
               <div className="flex flex-wrap gap-4">
                 <div className="space-y-1">
                   <p className="text-xs text-gray-500 uppercase font-semibold">Format</p>
-                  <p className="font-medium text-gray-900 uppercase">.{format}</p>
+                  <p className="font-medium text-gray-900 uppercase">.{resultMeta.format}</p>
                 </div>
                 <div className="w-px bg-gray-300 hidden sm:block"></div>
                 <div className="space-y-1">
                   <p className="text-xs text-gray-500 uppercase font-semibold">Resolution</p>
-                  <p className="font-medium text-gray-900">{width}×{height}</p>
+                  <p className="font-medium text-gray-900">{resultMeta.width}×{resultMeta.height}</p>
                 </div>
                 <div className="w-px bg-gray-300 hidden sm:block"></div>
                 <div className="space-y-1">
                   <p className="text-xs text-gray-500 uppercase font-semibold">Duration</p>
-                  <p className="font-medium text-gray-900">{duration}s</p>
+                  <p className="font-medium text-gray-900">{resultMeta.duration}s</p>
                 </div>
                 <div className="w-px bg-gray-300 hidden sm:block"></div>
                 <div className="space-y-1">
                   <p className="text-xs text-gray-500 uppercase font-semibold">File Size</p>
-                  <p className="font-medium text-gray-900">{formatBytes(resultSize)}</p>
+                  <p className="font-medium text-gray-900">{formatBytes(resultMeta.size)}</p>
                 </div>
               </div>
               <button onClick={handleDownload}
@@ -1036,7 +1051,7 @@ const MediaGenerator = () => {
 // ==========================================
 const DummyTextGenerator = () => {
   const [paragraphs, setParagraphs] = useState(1);
-  const [characters, setCharacters] = useState(50);
+  const [characters, setCharacters] = useState('');
   const [text, setText] = useState('');
   const [isCopied, setIsCopied] = useState(false);
 
@@ -1144,12 +1159,7 @@ const JsonFormatter = () => {
   const [indent, setIndent] = useState(2);
   const [isCopied, setIsCopied] = useState(false);
 
-  useEffect(() => {
-    formatJson('format');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input, indent]);
-
-  const formatJson = (action) => {
+  const formatJson = useCallback((action) => {
     if (!input.trim()) {
       setOutput('');
       setError(null);
@@ -1169,7 +1179,11 @@ const JsonFormatter = () => {
       setError(err.message);
       setOutput('');
     }
-  };
+  }, [input, indent]);
+
+  useEffect(() => {
+    formatJson('format');
+  }, [formatJson]);
 
   const handleCopy = () => {
     if (output) {
@@ -1858,8 +1872,8 @@ const AesTab = () => {
 
   const processCryptoJS = async () => {
     const CryptoJS = await loadCryptoJS();
-    const modeMap = { CBC: CryptoJS.mode.CBC, GCM: CryptoJS.mode.CBC }; // CryptoJS doesn't support GCM natively, use CBC
-    const selectedMode = aesMode === 'GCM' ? CryptoJS.mode.CBC : CryptoJS.mode.CBC;
+    // CryptoJS does not support AES-GCM natively; both modes use CBC
+    const selectedMode = CryptoJS.mode.CBC;
 
     if (mode === 'encrypt') {
       const encrypted = CryptoJS.AES.encrypt(inputText, secretKey, {
