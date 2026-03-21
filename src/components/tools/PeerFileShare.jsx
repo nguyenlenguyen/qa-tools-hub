@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Share2, Smartphone, Laptop, FileUp, Download,
-  CheckCircle, XCircle, Loader2, Users
+  CheckCircle, XCircle, Loader2, Users, MessageSquare
 } from 'lucide-react';
 
 const ROOM_PREFIX = 'qafs';
@@ -38,6 +38,7 @@ const DEVICE_NAMES = [
 const MSG_FILE_START = 1;
 const MSG_FILE_CHUNK = 2;
 const MSG_FILE_END = 3;
+const MSG_MESSAGE = 4;
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -92,6 +93,15 @@ function buildFileEnd(transferId) {
   encodeTransferId(transferId).forEach((b, i) => view.setUint8(4 + i, b));
   return buf;
 }
+function buildMessage(transferId, text) {
+  const textBytes = enc.encode(text);
+  const buf = new ArrayBuffer(12 + textBytes.length);
+  const view = new DataView(buf);
+  view.setUint32(0, MSG_MESSAGE, true);
+  encodeTransferId(transferId).forEach((b, i) => view.setUint8(4 + i, b));
+  new Uint8Array(buf, 12).set(textBytes);
+  return buf;
+}
 
 function parseMessage(arrayBuffer) {
   const view = new DataView(arrayBuffer);
@@ -114,6 +124,10 @@ function parseMessage(arrayBuffer) {
   if (msgType === MSG_FILE_END) {
     return { msgType, transferId };
   }
+  if (msgType === MSG_MESSAGE) {
+    const text = dec.decode(new Uint8Array(arrayBuffer, 12));
+    return { msgType, transferId, text };
+  }
   return null;
 }
 
@@ -121,7 +135,7 @@ function parseMessage(arrayBuffer) {
 
 export default function PeerFileShare() {
   const [publicIp, setPublicIp] = useState('');
-  const [myPeerId, setMyPeerId] = useState('');
+  const [msgInputs, setMsgInputs] = useState({}); // { peerId: text }
   const [isHost, setIsHost] = useState(null);
   const [peers, setPeers] = useState([]);
   const [transfers, setTransfers] = useState([]);
@@ -348,6 +362,13 @@ export default function PeerFileShare() {
           t.id === msg.transferId ? { ...t, progress } : t
         ));
 
+      } else if (msg.msgType === MSG_MESSAGE) {
+        setTransfers(prev => [{
+          id: msg.transferId, role: 'receive', kind: 'message',
+          name: msg.text, progress: 100, status: 'complete', saved: true,
+          from: conn.peer,
+        }, ...prev]);
+
       } else if (msg.msgType === MSG_FILE_END) {
         const entry = incomingRef.current[msg.transferId];
         if (!entry) return;
@@ -428,11 +449,28 @@ export default function PeerFileShare() {
     else conn.on('open', doSend);
   };
 
+  const sendMessage = (targetId, text) => {
+    if (!text.trim()) return;
+    const transferId = Math.random().toString(36).slice(2, 9);
+    const conn = getFileConn(targetId);
+    const doSend = () => {
+      conn.send(buildMessage(transferId, text));
+      setTransfers(prev => [{
+        id: transferId, role: 'send', kind: 'message',
+        name: text, progress: 100, status: 'complete', to: targetId,
+      }, ...prev]);
+    };
+    if (conn.open) doSend(); else conn.on('open', doSend);
+  };
+
   const downloadFile = (transfer) => {
     const url = URL.createObjectURL(transfer.file);
     const a = document.createElement('a');
     a.href = url; a.download = transfer.name; a.click();
     URL.revokeObjectURL(url);
+    setTransfers(prev => prev.map(t =>
+      t.id === transfer.id ? { ...t, file: null, saved: true } : t
+    ));
   };
 
   const getDeviceIcon = (type) =>
@@ -459,20 +497,31 @@ export default function PeerFileShare() {
 
   const TransferRow = ({ t }) => (
     <div className="flex items-center gap-3 px-4 py-3">
+      <div className={`p-1.5 rounded-lg shrink-0 ${t.kind === 'message' ? 'bg-violet-50 text-violet-500' : t.role === 'send' ? 'bg-amber-50 text-amber-500' : 'bg-emerald-50 text-emerald-500'}`}>
+        {t.kind === 'message' ? <MessageSquare size={14} /> : t.role === 'send' ? <FileUp size={14} /> : <Download size={14} />}
+      </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-gray-900 truncate">{t.name}</p>
-        <div className="flex items-center gap-2 mt-1">
-          <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
-            <div
-              className={`h-full transition-all duration-300 ${t.status === 'complete' ? 'bg-emerald-500' : t.status === 'error' ? 'bg-red-400' : 'bg-blue-500'}`}
-              style={{ width: `${t.progress}%` }}
-            />
-          </div>
-          <span className="text-[10px] text-gray-400 w-7 text-right">{t.progress}%</span>
-        </div>
+        {t.kind === 'message' ? (
+          <p className="text-sm text-gray-800 break-words">{t.name}</p>
+        ) : (
+          <>
+            <p className="text-sm font-medium text-gray-900 truncate">{t.name}</p>
+            <div className="flex items-center gap-2 mt-1">
+              <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-300 ${t.status === 'complete' ? 'bg-emerald-500' : t.status === 'error' ? 'bg-red-400' : 'bg-blue-500'}`}
+                  style={{ width: `${t.progress}%` }}
+                />
+              </div>
+              <span className="text-[10px] text-gray-400 w-7 text-right">{t.progress}%</span>
+            </div>
+          </>
+        )}
       </div>
       <div className="shrink-0">
-        {t.status === 'complete' ? (
+        {t.kind === 'message' || t.saved ? (
+          <CheckCircle className="text-emerald-500" size={18} />
+        ) : t.status === 'complete' ? (
           t.role === 'receive' ? (
             <button
               onClick={() => downloadFile(t)}
@@ -535,21 +584,56 @@ export default function PeerFileShare() {
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
               {peers.map(peer => (
-                <label key={peer.id} className="group cursor-pointer">
-                  <input type="file" className="hidden" onChange={(e) => sendFile(peer.id, e.target.files[0])} />
-                  <div className="flex flex-col items-center gap-2 p-3 bg-gray-50 rounded-xl border border-transparent group-hover:border-blue-200 group-hover:bg-blue-50 transition-all duration-200">
-                    <div className="p-2 bg-white rounded-lg shadow-sm text-gray-400 group-hover:text-blue-500 transition-colors">
-                      {peer.type === 'mobile' ? <Smartphone size={20} /> : <Laptop size={20} />}
-                    </div>
-                    <div className="text-center min-w-0 w-full">
-                      <p className="text-xs font-semibold text-gray-900 truncate">{peer.name}</p>
-                      <p className="text-[9px] font-mono text-gray-400">{peer.id.slice(-6)}</p>
-                    </div>
-                    <div className="flex items-center gap-1 px-2 py-1 bg-white border border-gray-200 rounded-lg text-[11px] font-medium text-gray-600 group-hover:bg-blue-500 group-hover:text-white group-hover:border-blue-500 transition-all w-full justify-center">
+                <div key={peer.id} className="group flex flex-col items-center gap-2 p-3 bg-gray-50 rounded-xl border border-transparent hover:border-blue-200 hover:bg-blue-50 transition-all duration-200">
+                  <div className="p-2 bg-white rounded-lg shadow-sm text-gray-400 group-hover:text-blue-500 transition-colors">
+                    {peer.type === 'mobile' ? <Smartphone size={20} /> : <Laptop size={20} />}
+                  </div>
+                  <div className="text-center min-w-0 w-full">
+                    <p className="text-xs font-semibold text-gray-900 truncate">{peer.name}</p>
+                    <p className="text-[9px] font-mono text-gray-400">{peer.id.slice(-6)}</p>
+                  </div>
+                  <label className="w-full cursor-pointer"
+                    onMouseEnter={e => {
+                      const btn = e.currentTarget.querySelector('.send-btn');
+                      if (btn) { btn.style.background = '#3b82f6'; btn.style.borderColor = '#3b82f6'; btn.style.color = 'white'; }
+                    }}
+                    onMouseLeave={e => {
+                      const btn = e.currentTarget.querySelector('.send-btn');
+                      if (btn) { btn.style.background = 'white'; btn.style.borderColor = '#e5e7eb'; btn.style.color = '#374151'; }
+                    }}
+                  >
+                    <input type="file" className="hidden" onChange={(e) => sendFile(peer.id, e.target.files[0])} />
+                    <div className="send-btn flex items-center gap-1 px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-[11px] font-medium text-gray-700 transition-all w-full justify-center">
                       <FileUp size={11} /> Send File
                     </div>
+                  </label>
+                  <div className="flex gap-1 w-full">
+                    <input
+                      type="text"
+                      placeholder="Message..."
+                      value={msgInputs[peer.id] || ''}
+                      onChange={e => setMsgInputs(prev => ({ ...prev, [peer.id]: e.target.value }))}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && msgInputs[peer.id]?.trim()) {
+                          sendMessage(peer.id, msgInputs[peer.id]);
+                          setMsgInputs(prev => ({ ...prev, [peer.id]: '' }));
+                        }
+                      }}
+                      className="flex-1 min-w-0 px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-[11px] text-gray-700 outline-none focus:border-violet-400 transition-colors"
+                    />
+                    <button
+                      onClick={() => {
+                        if (msgInputs[peer.id]?.trim()) {
+                          sendMessage(peer.id, msgInputs[peer.id]);
+                          setMsgInputs(prev => ({ ...prev, [peer.id]: '' }));
+                        }
+                      }}
+                      className="px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-gray-500 hover:bg-violet-500 hover:text-white hover:border-violet-500 transition-all"
+                    >
+                      <MessageSquare size={11} />
+                    </button>
                   </div>
-                </label>
+                </div>
               ))}
             </div>
           )}
