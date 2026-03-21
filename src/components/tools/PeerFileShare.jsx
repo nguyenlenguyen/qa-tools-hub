@@ -28,16 +28,39 @@ export default function PeerFileShare() {
 
   const peerRef = useRef(null);
   const ntfySourceRef = useRef(null);
-  // FIX: use a ref to always have fresh peerId inside closures (subscribeToTopic, heartbeat)
+  // Refs so closures always see the latest values without re-creating intervals/SSE
   const peerIdRef = useRef('');
+  const roomTopicRef = useRef('');
+  const deviceNameRef = useRef(deviceName);
+  const heartbeatRef = useRef(null);
+  const staleCheckerRef = useRef(null);
 
   useEffect(() => {
     initDiscovery();
     return () => {
       if (peerRef.current) peerRef.current.destroy();
       if (ntfySourceRef.current) ntfySourceRef.current.close();
+      if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+      if (staleCheckerRef.current) clearInterval(staleCheckerRef.current);
     };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const startHeartbeat = () => {
+    if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+    if (staleCheckerRef.current) clearInterval(staleCheckerRef.current);
+
+    // Heartbeat every 10s — stable, not tied to React state
+    heartbeatRef.current = setInterval(() => {
+      if (peerIdRef.current && roomTopicRef.current) {
+        sendPresence(roomTopicRef.current, peerIdRef.current, deviceNameRef.current, false);
+      }
+    }, 10000);
+
+    // Stale = missed 3 heartbeats (30s)
+    staleCheckerRef.current = setInterval(() => {
+      setPeers(prev => prev.filter(p => Date.now() - (p.lastSeen || 0) < 35000));
+    }, 5000);
+  };
 
   const initDiscovery = async () => {
     try {
@@ -48,6 +71,7 @@ export default function PeerFileShare() {
       setPublicIp(ip);
 
       const topic = `${NTFY_TOPIC_PREFIX}-${btoa(ip).replace(/=/g, '').slice(0, 10)}`;
+      roomTopicRef.current = topic;
       setRoomTopic(topic);
 
       if (!window.Peer) {
@@ -61,13 +85,18 @@ export default function PeerFileShare() {
         peerIdRef.current = id;
         setPeerId(id);
         setStatus('ready');
-        // Subscribe first so we're listening before we announce ourselves
+
+        // Subscribe SSE first, then announce — so we don't miss replies
         subscribeToTopic(topic, id);
-        // Burst announce with isNew=true so existing peers reply back with their presence.
-        // Retry at 2s and 5s to survive SSE setup delay on the other side.
-        broadcastPresence(topic, id, deviceName);
-        setTimeout(() => broadcastPresence(topic, id, deviceName), 2000);
-        setTimeout(() => broadcastPresence(topic, id, deviceName), 5000);
+
+        // Burst: announce 3 times to survive SSE setup delay on the other side
+        // All with isNew=true so existing peers reply back once with their presence
+        const announce = () => sendPresence(topic, id, deviceNameRef.current, true);
+        announce();
+        setTimeout(announce, 2500);
+        setTimeout(announce, 6000);
+
+        startHeartbeat();
       });
 
       myPeer.on('connection', (conn) => {
@@ -87,63 +116,44 @@ export default function PeerFileShare() {
   };
 
   const subscribeToTopic = (topic, myId) => {
-    const source = new EventSource(`https://ntfy.sh/${topic}/sse`);
+    // `since=0` tells ntfy to only deliver messages from NOW — no cached replay
+    const source = new EventSource(`https://ntfy.sh/${topic}/sse?since=0`);
     ntfySourceRef.current = source;
 
     source.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
-        if (data.message) {
-          const payload = JSON.parse(data.message);
+        const envelope = JSON.parse(event.data);
+        // ntfy SSE: real messages have `event:"message"` and a `message` string field
+        if (!envelope.message) return;
 
-          const messageTime = payload.timestamp || 0;
-          const now = Date.now();
-          if (now - messageTime > 30000) return;
+        const payload = JSON.parse(envelope.message);
+        if (payload.type !== 'presence') return;
 
-          // FIX: always use peerIdRef.current so closure never captures stale ''
-          const currentId = peerIdRef.current || myId;
-          if (payload.type === 'presence' && payload.peerId !== currentId) {
-            addPeer({
-              id: payload.peerId,
-              name: payload.deviceName,
-              type: /Android|iPhone|iPad/i.test(payload.userAgent) ? 'mobile' : 'desktop',
-              lastSeen: now
-            });
-            // Only reply when the other side announces isNew to avoid
-            // infinite ping-pong that floods ntfy.sh and kills discovery.
-            if (payload.isNew) {
-              sendPresence(topic, currentId, deviceName, false);
-            }
-          }
+        const currentId = peerIdRef.current || myId;
+        if (payload.peerId === currentId) return; // ignore our own
+
+        const now = Date.now();
+        addPeer({
+          id: payload.peerId,
+          name: payload.deviceName,
+          type: /Android|iPhone|iPad/i.test(payload.userAgent) ? 'mobile' : 'desktop',
+          lastSeen: now
+        });
+
+        // Reply once when a device announces itself as new/rejoining.
+        // isNew=false on our reply prevents the other side from replying back → no loop.
+        if (payload.isNew) {
+          sendPresence(topic, currentId, deviceNameRef.current, false);
         }
       } catch (_) {
-        // not our message format
+        // keepalive / open events — ignore
       }
     };
-  };
 
-  const broadcastPresence = (topic, id, name) => {
-    sendPresence(topic, id, name, true);
-  };
-
-  useEffect(() => {
-    // Heartbeat every 8s so peers stay fresh
-    const heartbeat = setInterval(() => {
-      if (roomTopic && peerIdRef.current && status === 'ready') {
-        sendPresence(roomTopic, peerIdRef.current, deviceName, false);
-      }
-    }, 8000);
-
-    // A peer is stale if we haven't heard from it in 20s (> 2 missed heartbeats)
-    const staleChecker = setInterval(() => {
-      setPeers(prev => prev.filter(p => Date.now() - (p.lastSeen || 0) < 20000));
-    }, 5000);
-
-    return () => {
-      clearInterval(heartbeat);
-      clearInterval(staleChecker);
+    source.onerror = () => {
+      // EventSource auto-reconnects; nothing to do here
     };
-  }, [roomTopic, deviceName, status]);
+  };
 
   const sendPresence = (topic, id, name, isNew) => {
     fetch(`https://ntfy.sh/${topic}`, {
