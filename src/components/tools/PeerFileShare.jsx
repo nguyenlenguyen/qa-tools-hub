@@ -58,11 +58,16 @@ export default function PeerFileShare() {
       peerRef.current = myPeer;
 
       myPeer.on('open', (id) => {
-        peerIdRef.current = id;   // FIX: keep ref in sync
+        peerIdRef.current = id;
         setPeerId(id);
         setStatus('ready');
-        broadcastPresence(topic, id, deviceName);
+        // Subscribe first so we're listening before we announce ourselves
         subscribeToTopic(topic, id);
+        // Burst announce: send presence immediately, then again at 2s and 5s
+        // to survive SSE connection setup delay on the other side
+        broadcastPresence(topic, id, deviceName);
+        setTimeout(() => broadcastPresence(topic, id, deviceName), 2000);
+        setTimeout(() => broadcastPresence(topic, id, deviceName), 5000);
       });
 
       myPeer.on('connection', (conn) => {
@@ -104,9 +109,10 @@ export default function PeerFileShare() {
               type: /Android|iPhone|iPad/i.test(payload.userAgent) ? 'mobile' : 'desktop',
               lastSeen: now
             });
-            if (payload.isNew) {
-              sendPresence(topic, currentId, deviceName, false);
-            }
+            // FIX: reply to ALL presence messages, not just isNew.
+            // This ensures a refreshed device (new peerId) gets re-discovered
+            // by existing peers who see its presence and reply back.
+            sendPresence(topic, currentId, deviceName, false);
           }
         }
       } catch (_) {
@@ -120,15 +126,16 @@ export default function PeerFileShare() {
   };
 
   useEffect(() => {
+    // Heartbeat every 8s so peers stay fresh
     const heartbeat = setInterval(() => {
-      // FIX: read fresh values from refs instead of stale closure state
       if (roomTopic && peerIdRef.current && status === 'ready') {
         sendPresence(roomTopic, peerIdRef.current, deviceName, false);
       }
-    }, 10000);
+    }, 8000);
 
+    // A peer is stale if we haven't heard from it in 20s (> 2 missed heartbeats)
     const staleChecker = setInterval(() => {
-      setPeers(prev => prev.filter(p => Date.now() - (p.lastSeen || 0) < 25000));
+      setPeers(prev => prev.filter(p => Date.now() - (p.lastSeen || 0) < 20000));
     }, 5000);
 
     return () => {
