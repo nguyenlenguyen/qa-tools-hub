@@ -13,7 +13,7 @@ const DEVICE_NAMES = [
 export default function PeerFileShare() {
   const [publicIp, setPublicIp] = useState('');
   const [myPeerId, setMyPeerId] = useState('');
-  const [isHost, setIsHost] = useState(null); // null=unknown, true, false
+  const [isHost, setIsHost] = useState(null);
   const [peers, setPeers] = useState([]);
   const [transfers, setTransfers] = useState([]);
   const [status, setStatus] = useState('initializing');
@@ -39,7 +39,8 @@ export default function PeerFileShare() {
   const guestsRef = useRef({});
   const hostConnRef = useRef(null);
   const fileConnsRef = useRef({});
-  const destroyedRef = useRef(false);
+  // FIX 1: guard against React StrictMode double-invoke
+  const initCalledRef = useRef(false);
 
   const log = (msg, data) => {
     const ts = new Date().toISOString().slice(11, 23);
@@ -49,9 +50,12 @@ export default function PeerFileShare() {
   };
 
   useEffect(() => {
+    // FIX 1: StrictMode calls useEffect cleanup+setup twice in dev.
+    // Guard so only ONE init() ever runs per mount.
+    if (initCalledRef.current) return;
+    initCalledRef.current = true;
     init();
     return () => {
-      destroyedRef.current = true;
       if (mainPeerRef.current) mainPeerRef.current.destroy();
       if (anchorPeerRef.current) anchorPeerRef.current.destroy();
     };
@@ -78,7 +82,6 @@ export default function PeerFileShare() {
   const init = async () => {
     try {
       setStatus('initializing');
-      destroyedRef.current = false;
       log('init() start');
 
       const res = await fetch('https://api.ipify.org?format=json');
@@ -93,14 +96,12 @@ export default function PeerFileShare() {
 
       if (!window.Peer) throw new Error('PeerJS not loaded.');
 
-      // Step 1: register with a random ID
       const randomId = `${ROOM_PREFIX}-m-${Math.random().toString(36).slice(2, 10)}`;
       log('registering mainPeer', randomId);
       const mainPeer = new window.Peer(randomId, { secure: true });
       mainPeerRef.current = mainPeer;
 
       mainPeer.on('open', (id) => {
-        if (destroyedRef.current) return;
         log('mainPeer open', id);
         myPeerIdRef.current = id;
         setMyPeerId(id);
@@ -113,14 +114,12 @@ export default function PeerFileShare() {
       });
 
       mainPeer.on('error', (err) => {
-        if (destroyedRef.current) return;
         log('mainPeer ERROR', err.type);
         setError('mainPeer error: ' + err.type);
         setStatus('error');
       });
 
     } catch (err) {
-      if (destroyedRef.current) return;
       log('init ERROR', err.message);
       setError(err.message);
       setStatus('error');
@@ -128,10 +127,8 @@ export default function PeerFileShare() {
   };
 
   const tryClaimAnchor = (anchorId) => {
-    if (destroyedRef.current) return;
     log('tryClaimAnchor', anchorId);
 
-    // Destroy any previous anchor peer first
     if (anchorPeerRef.current) {
       anchorPeerRef.current.destroy();
       anchorPeerRef.current = null;
@@ -141,7 +138,6 @@ export default function PeerFileShare() {
     anchorPeerRef.current = anchorPeer;
 
     anchorPeer.on('open', (id) => {
-      if (destroyedRef.current) { anchorPeer.destroy(); return; }
       log('anchorPeer open → I am HOST', id);
       isHostRef.current = true;
       setIsHost(true);
@@ -154,23 +150,14 @@ export default function PeerFileShare() {
     });
 
     anchorPeer.on('error', (err) => {
-      if (destroyedRef.current) return;
       log('anchorPeer ERROR', err.type);
-      if (err.type === 'unavailable-id') {
-        log('anchor taken → becoming GUEST');
-        anchorPeerRef.current = null;
-        becomeGuest(anchorId);
-      } else {
-        log('anchor non-fatal error, becoming GUEST anyway');
-        anchorPeerRef.current = null;
-        becomeGuest(anchorId);
-      }
+      anchorPeerRef.current = null;
+      becomeGuest(anchorId);
     });
   };
 
   const becomeGuest = (anchorId) => {
-    if (destroyedRef.current) return;
-    log('becomeGuest, connecting to anchor', anchorId);
+    log('becomeGuest → connecting to anchor', anchorId);
     isHostRef.current = false;
     setIsHost(false);
     setStatus('ready');
@@ -179,7 +166,6 @@ export default function PeerFileShare() {
     hostConnRef.current = conn;
 
     conn.on('open', () => {
-      if (destroyedRef.current) return;
       log('GUEST connected to host, sending hello');
       conn.send({ type: 'hello', ...myMeta() });
     });
@@ -193,30 +179,49 @@ export default function PeerFileShare() {
     });
 
     conn.on('close', () => {
-      if (destroyedRef.current) return;
       log('GUEST: host conn closed, racing to claim anchor');
       hostConnRef.current = null;
       setPeers([]);
       setStatus('initializing');
-      setTimeout(() => {
-        if (!destroyedRef.current) tryClaimAnchor(anchorIdRef.current);
-      }, 500 + Math.random() * 1000);
+      setTimeout(() => tryClaimAnchor(anchorIdRef.current), 500 + Math.random() * 1000);
     });
 
     conn.on('error', (err) => {
-      if (destroyedRef.current) return;
       log('GUEST hostConn error', err.type);
     });
   };
 
   const handleGuestSignaling = (conn) => {
-    conn.on('data', (data) => {
+    // FIX 2: buffer any data that arrives before we attach the handler.
+    // PeerJS buffers incoming data internally so conn.on('data') set in 'open'
+    // is fine — but if conn is already open when we get here, data may have
+    // already queued. The safest pattern: attach handlers immediately (before open),
+    // then send the member-list ack once we have an id from the hello message.
+    const pending = [];
+    let ready = false;
+
+    const processMessage = (data) => {
       if (!data || typeof data !== 'object') return;
       if (data.type === 'hello') {
         log('HOST received hello from', data.name);
-        guestsRef.current[data.id] = { id: data.id, name: data.name, type: data.type, conn };
+        guestsRef.current[data.id] = {
+          id: data.id, name: data.name, type: data.type, conn,
+        };
         broadcastMembers();
       }
+    };
+
+    conn.on('open', () => {
+      log('HOST: guest signaling conn open', conn.peer);
+      ready = true;
+      // Drain anything that arrived before open
+      pending.forEach(processMessage);
+      pending.length = 0;
+    });
+
+    conn.on('data', (data) => {
+      if (!ready) { pending.push(data); return; }
+      processMessage(data);
     });
 
     conn.on('close', () => {
@@ -230,6 +235,8 @@ export default function PeerFileShare() {
 
     conn.on('error', (err) => log('HOST guestSignaling error', err.type));
   };
+
+  // ── File transfer ──────────────────────────────────────────────────────────
 
   const getOrOpenFileConn = (targetId) => {
     const existing = fileConnsRef.current[targetId];
@@ -259,7 +266,8 @@ export default function PeerFileShare() {
         const updated = [...prev];
         const idx = updated.findIndex(t => t.from === fromId && t.status === 'receiving');
         if (idx !== -1) {
-          const typed = updated[idx].mimeType ? new Blob([blob], { type: updated[idx].mimeType }) : blob;
+          const typed = updated[idx].mimeType
+            ? new Blob([blob], { type: updated[idx].mimeType }) : blob;
           updated[idx] = { ...updated[idx], status: 'complete', progress: 100, file: typed };
         }
         return updated;
@@ -359,7 +367,7 @@ export default function PeerFileShare() {
         </div>
       </div>
 
-      {/* Debug Log Panel */}
+      {/* Debug Log */}
       <div className="bg-gray-950 rounded-2xl overflow-hidden">
         <div className="px-4 py-2 border-b border-gray-800 flex items-center gap-2">
           <Terminal size={14} className="text-green-400" />
@@ -369,8 +377,7 @@ export default function PeerFileShare() {
         <div className="p-4 h-48 overflow-y-auto font-mono text-xs text-green-300 space-y-0.5">
           {logs.length === 0
             ? <div className="text-gray-600">Waiting for events...</div>
-            : logs.map((l, i) => <div key={i}>{l}</div>)
-          }
+            : logs.map((l, i) => <div key={i}>{l}</div>)}
         </div>
       </div>
 
