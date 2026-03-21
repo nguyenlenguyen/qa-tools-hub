@@ -109,8 +109,17 @@ export default function PeerFileShare() {
       });
 
       mainPeer.on('connection', (conn) => {
-        log('mainPeer incoming file-conn from', conn.peer);
-        setupFileConn(conn);
+        if (conn.label === 'file-bin') {
+          // Binary data conn — pipe ArrayBuffers to handleFileData
+          log('mainPeer incoming bin-conn from', conn.peer);
+          fileConnsRef.current[conn.peer + '-bin'] = conn;
+          conn.on('data', (data) => handleFileData(conn.peer, data, true));
+          conn.on('close', () => { delete fileConnsRef.current[conn.peer + '-bin']; });
+          conn.on('error', (err) => log('binConn error', err.type));
+        } else {
+          log('mainPeer incoming file-conn from', conn.peer);
+          setupFileConn(conn);
+        }
       });
 
       mainPeer.on('error', (err) => {
@@ -259,52 +268,53 @@ export default function PeerFileShare() {
     conn.on('error', (err) => log('fileConn error', err.type));
   };
 
-  const incomingChunks = useRef({}); // { transferId: { meta, chunks[] } }
+  const incomingChunks = useRef({}); // { transferId: { meta, receivedBytes, arrays[] } }
+  const activeBinFrom = useRef({}); // { peerId: transferId } — maps binary conn peer to active transfer
 
-  const handleFileData = (fromId, data) => {
+  const handleFileData = (fromId, data, isBinary = false) => {
+    if (isBinary) {
+      // Raw ArrayBuffer chunk — find the active transfer from this peer
+      const transferId = activeBinFrom.current[fromId];
+      if (!transferId) return;
+      const entry = incomingChunks.current[transferId];
+      if (!entry) return;
+
+      entry.arrays.push(new Uint8Array(data));
+      entry.receivedBytes += data.byteLength;
+      const progress = Math.min(99, Math.round((entry.receivedBytes / entry.totalSize) * 100));
+      setTransfers(prev => prev.map(t => t.id === transferId ? { ...t, progress } : t));
+      return;
+    }
+
     if (!data || typeof data !== 'object') return;
 
     if (data.type === 'file-start') {
-      log('file-start', data.name + ' chunks=' + data.numChunks);
+      log('file-start', data.name + ' size=' + data.totalSize);
       incomingChunks.current[data.transferId] = {
         name: data.name, mimeType: data.mimeType,
-        totalSize: data.totalSize, numChunks: data.numChunks,
-        chunks: new Array(data.numChunks),
+        totalSize: data.totalSize,
+        receivedBytes: 0, arrays: [],
       };
+      // Mark this peer as actively sending this transfer
+      activeBinFrom.current[fromId] = data.transferId;
       setTransfers(prev => [{
         id: data.transferId, role: 'receive', name: data.name,
         size: data.totalSize, progress: 0, status: 'receiving', from: fromId,
       }, ...prev]);
-
-    } else if (data.type === 'file-chunk') {
-      const entry = incomingChunks.current[data.transferId];
-      if (!entry) return;
-      entry.chunks[data.index] = data.data; // base64 string
-      const received = entry.chunks.filter(Boolean).length;
-      const progress = Math.round((received / entry.numChunks) * 100);
-      setTransfers(prev => prev.map(t =>
-        t.id === data.transferId ? { ...t, progress } : t
-      ));
 
     } else if (data.type === 'file-end') {
       const entry = incomingChunks.current[data.transferId];
       if (!entry) return;
       log('file-end, reassembling', entry.name);
 
-      // Decode all base64 chunks and concatenate into one Uint8Array
-      const arrays = entry.chunks.map(b64 => {
-        const binary = atob(b64);
-        const arr = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
-        return arr;
-      });
-      const total = arrays.reduce((n, a) => n + a.length, 0);
+      const total = entry.arrays.reduce((n, a) => n + a.length, 0);
       const result = new Uint8Array(total);
       let offset = 0;
-      for (const arr of arrays) { result.set(arr, offset); offset += arr.length; }
+      for (const arr of entry.arrays) { result.set(arr, offset); offset += arr.length; }
 
       const blob = new Blob([result], { type: entry.mimeType || '' });
       delete incomingChunks.current[data.transferId];
+      delete activeBinFrom.current[fromId];
 
       setTransfers(prev => prev.map(t =>
         t.id === data.transferId
@@ -314,7 +324,7 @@ export default function PeerFileShare() {
     }
   };
 
-  const CHUNK_SIZE = 64 * 1024; // 64KB per chunk (safe for PeerJS JSON mode)
+  const CHUNK_SIZE = 64 * 1024; // 64KB binary chunks — no base64 overhead
 
   const sendFile = (targetId, file) => {
     if (!file) return;
@@ -324,7 +334,18 @@ export default function PeerFileShare() {
       size: file.size, progress: 0, status: 'sending', to: targetId,
     }, ...prev]);
 
-    const conn = getOrOpenFileConn(targetId);
+    // Signal conn (json) — sends metadata/control messages
+    const sigConn = getOrOpenFileConn(targetId);
+    // Binary conn — sends raw ArrayBuffer chunks
+    const binKey = targetId + '-bin';
+    let binConn = fileConnsRef.current[binKey];
+    if (!binConn || !binConn.open) {
+      binConn = mainPeerRef.current.connect(targetId, { reliable: true, serialization: 'binary', label: 'file-bin' });
+      fileConnsRef.current[binKey] = binConn;
+      binConn.on('error', (err) => log('binConn error', err.type));
+      binConn.on('close', () => { delete fileConnsRef.current[binKey]; });
+    }
+
     const doSend = () => {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -332,14 +353,13 @@ export default function PeerFileShare() {
         const totalSize = buffer.byteLength;
         const numChunks = Math.ceil(totalSize / CHUNK_SIZE);
 
-        // Send header first
-        conn.send({ type: 'file-start', transferId, name: file.name, mimeType: file.type, totalSize, numChunks });
+        // Send metadata over json conn
+        sigConn.send({ type: 'file-start', transferId, name: file.name, mimeType: file.type, totalSize, numChunks });
 
-        // Send chunks sequentially with small delay to avoid flooding
         let chunkIdx = 0;
         const sendNextChunk = () => {
           if (chunkIdx >= numChunks) {
-            conn.send({ type: 'file-end', transferId });
+            sigConn.send({ type: 'file-end', transferId });
             setTransfers(prev => prev.map(t =>
               t.id === transferId ? { ...t, status: 'complete', progress: 100 } : t
             ));
@@ -347,20 +367,20 @@ export default function PeerFileShare() {
           }
           const start = chunkIdx * CHUNK_SIZE;
           const end = Math.min(start + CHUNK_SIZE, totalSize);
-          const slice = buffer.slice(start, end);
-          const bytes = new Uint8Array(slice);
-          let binary = '';
-          for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-          conn.send({ type: 'file-chunk', transferId, index: chunkIdx, data: btoa(binary) });
+          // Send raw binary — no base64 encoding
+          binConn.send(buffer.slice(start, end));
 
           const progress = Math.round(((chunkIdx + 1) / numChunks) * 100);
           setTransfers(prev => prev.map(t =>
             t.id === transferId ? { ...t, progress } : t
           ));
           chunkIdx++;
-          setTimeout(sendNextChunk, 10);
+          setTimeout(sendNextChunk, 5);
         };
-        sendNextChunk();
+
+        // Start sending chunks after binConn is open
+        if (binConn.open) sendNextChunk();
+        else binConn.on('open', sendNextChunk);
       };
       reader.onerror = () => setTransfers(prev => prev.map(t =>
         t.id === transferId ? { ...t, status: 'error' } : t
@@ -368,8 +388,8 @@ export default function PeerFileShare() {
       reader.readAsArrayBuffer(file);
     };
 
-    if (conn.open) setTimeout(doSend, 100);
-    else conn.on('open', () => setTimeout(doSend, 100));
+    if (sigConn.open) setTimeout(doSend, 100);
+    else sigConn.on('open', () => setTimeout(doSend, 100));
   };
 
   const downloadFile = (transfer) => {
