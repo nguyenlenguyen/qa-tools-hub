@@ -63,8 +63,8 @@ export default function PeerFileShare() {
         setStatus('ready');
         // Subscribe first so we're listening before we announce ourselves
         subscribeToTopic(topic, id);
-        // Burst announce: send presence immediately, then again at 2s and 5s
-        // to survive SSE connection setup delay on the other side
+        // Burst announce with isNew=true so existing peers reply back with their presence.
+        // Retry at 2s and 5s to survive SSE setup delay on the other side.
         broadcastPresence(topic, id, deviceName);
         setTimeout(() => broadcastPresence(topic, id, deviceName), 2000);
         setTimeout(() => broadcastPresence(topic, id, deviceName), 5000);
@@ -109,10 +109,11 @@ export default function PeerFileShare() {
               type: /Android|iPhone|iPad/i.test(payload.userAgent) ? 'mobile' : 'desktop',
               lastSeen: now
             });
-            // FIX: reply to ALL presence messages, not just isNew.
-            // This ensures a refreshed device (new peerId) gets re-discovered
-            // by existing peers who see its presence and reply back.
-            sendPresence(topic, currentId, deviceName, false);
+            // Only reply when the other side announces isNew to avoid
+            // infinite ping-pong that floods ntfy.sh and kills discovery.
+            if (payload.isNew) {
+              sendPresence(topic, currentId, deviceName, false);
+            }
           }
         }
       } catch (_) {
