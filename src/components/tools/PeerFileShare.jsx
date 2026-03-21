@@ -5,10 +5,119 @@ import {
 } from 'lucide-react';
 
 const ROOM_PREFIX = 'qafs';
+const CHUNK_SIZE = 16 * 1024; // 16 KB — well under WebRTC's ~256 KB SCTP limit
+
 const DEVICE_NAMES = [
   'Swift Fox', 'Bold Eagle', 'Cool Penguin', 'Lazy Panda', 'Happy Dolphin',
   'Lunar Wolf', 'Zen Tiger', 'Neon Cat', 'Cosmic Owl', 'Desert Camel'
 ];
+
+/**
+ * Binary framing protocol over a single PeerJS `serialization:'binary'` DataConnection.
+ *
+ * Every message is an ArrayBuffer:
+ *   [0..3]   : msgType  (Uint32LE)  1=FILE_START  2=FILE_CHUNK  3=FILE_END
+ *   [4..11]  : transferId encoded as 8 ASCII bytes (padded / truncated)
+ *
+ *   FILE_START  [12..15] numChunks (Uint32)
+ *               [16..19] nameLen   (Uint32)
+ *               [20..23] mimeLen   (Uint32)
+ *               [24..]   name UTF-8 bytes  then  mime UTF-8 bytes
+ *
+ *   FILE_CHUNK  [12..15] chunkIndex (Uint32)
+ *               [16..]   raw bytes
+ *
+ *   FILE_END    (no extra payload — signals reassembly)
+ *
+ * Using a single binary connection means:
+ *  - chunks and control messages share the same ordered SCTP stream → no race conditions
+ *  - no base64 bloat
+ *  - no separate signaling connection to synchronise
+ */
+
+const MSG_FILE_START = 1;
+const MSG_FILE_CHUNK = 2;
+const MSG_FILE_END = 3;
+
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+function encodeTransferId(id) {
+  // Always 8 bytes
+  const buf = new Uint8Array(8);
+  const src = enc.encode(id.slice(0, 8).padEnd(8, '\0'));
+  buf.set(src);
+  return buf;
+}
+
+function decodeTransferId(view, offset = 4) {
+  let s = '';
+  for (let i = 0; i < 8; i++) {
+    const c = view.getUint8(offset + i);
+    if (c === 0) break;
+    s += String.fromCharCode(c);
+  }
+  return s;
+}
+
+function buildFileStart(transferId, numChunks, name, mime) {
+  const nameBytes = enc.encode(name);
+  const mimeBytes = enc.encode(mime);
+  const buf = new ArrayBuffer(24 + nameBytes.length + mimeBytes.length);
+  const view = new DataView(buf);
+  view.setUint32(0, MSG_FILE_START, true);
+  encodeTransferId(transferId).forEach((b, i) => view.setUint8(4 + i, b));
+  view.setUint32(12, numChunks, true);
+  view.setUint32(16, nameBytes.length, true);
+  view.setUint32(20, mimeBytes.length, true);
+  new Uint8Array(buf, 24).set(nameBytes);
+  new Uint8Array(buf, 24 + nameBytes.length).set(mimeBytes);
+  return buf;
+}
+
+function buildFileChunk(transferId, index, chunkArrayBuffer) {
+  const buf = new ArrayBuffer(16 + chunkArrayBuffer.byteLength);
+  const view = new DataView(buf);
+  view.setUint32(0, MSG_FILE_CHUNK, true);
+  encodeTransferId(transferId).forEach((b, i) => view.setUint8(4 + i, b));
+  view.setUint32(12, index, true);
+  new Uint8Array(buf, 16).set(new Uint8Array(chunkArrayBuffer));
+  return buf;
+}
+
+function buildFileEnd(transferId) {
+  const buf = new ArrayBuffer(12);
+  const view = new DataView(buf);
+  view.setUint32(0, MSG_FILE_END, true);
+  encodeTransferId(transferId).forEach((b, i) => view.setUint8(4 + i, b));
+  return buf;
+}
+
+function parseMessage(arrayBuffer) {
+  const view = new DataView(arrayBuffer);
+  const msgType = view.getUint32(0, true);
+  const transferId = decodeTransferId(view, 4);
+
+  if (msgType === MSG_FILE_START) {
+    const numChunks = view.getUint32(12, true);
+    const nameLen = view.getUint32(16, true);
+    const mimeLen = view.getUint32(20, true);
+    const name = dec.decode(new Uint8Array(arrayBuffer, 24, nameLen));
+    const mime = dec.decode(new Uint8Array(arrayBuffer, 24 + nameLen, mimeLen));
+    return { msgType, transferId, numChunks, name, mime };
+  }
+  if (msgType === MSG_FILE_CHUNK) {
+    const index = view.getUint32(12, true);
+    const data = arrayBuffer.slice(16);
+    return { msgType, transferId, index, data };
+  }
+  if (msgType === MSG_FILE_END) {
+    return { msgType, transferId };
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function PeerFileShare() {
   const [publicIp, setPublicIp] = useState('');
@@ -30,6 +139,7 @@ export default function PeerFileShare() {
     return name;
   });
 
+  // ── Refs ───────────────────────────────────────────────────────────────────
   const mainPeerRef = useRef(null);
   const anchorPeerRef = useRef(null);
   const myPeerIdRef = useRef('');
@@ -38,20 +148,24 @@ export default function PeerFileShare() {
   const isHostRef = useRef(false);
   const guestsRef = useRef({});
   const hostConnRef = useRef(null);
+  // peerId → PeerJS DataConnection (binary, for file transfer)
   const fileConnsRef = useRef({});
-  // FIX 1: guard against React StrictMode double-invoke
+  // transferId → { name, mime, numChunks, chunks: Map<index, ArrayBuffer> }
+  const incomingRef = useRef({});
   const initCalledRef = useRef(false);
 
+  // ── Logging ────────────────────────────────────────────────────────────────
   const log = (msg, data) => {
     const ts = new Date().toISOString().slice(11, 23);
-    const line = data !== undefined ? `[${ts}] ${msg}: ${JSON.stringify(data)}` : `[${ts}] ${msg}`;
+    const line = data !== undefined
+      ? `[${ts}] ${msg}: ${JSON.stringify(data)}`
+      : `[${ts}] ${msg}`;
     console.log(line);
     setLogs(prev => [...prev.slice(-49), line]);
   };
 
+  // ── Lifecycle ──────────────────────────────────────────────────────────────
   useEffect(() => {
-    // FIX 1: StrictMode calls useEffect cleanup+setup twice in dev.
-    // Guard so only ONE init() ever runs per mount.
     if (initCalledRef.current) return;
     initCalledRef.current = true;
     init();
@@ -61,6 +175,7 @@ export default function PeerFileShare() {
     };
   }, []); // eslint-disable-line
 
+  // ── Helpers ────────────────────────────────────────────────────────────────
   const myMeta = () => ({
     id: myPeerIdRef.current,
     name: deviceNameRef.current,
@@ -72,22 +187,22 @@ export default function PeerFileShare() {
       { ...myMeta(), type: myMeta().deviceType },
       ...Object.values(guestsRef.current).map(({ id, name, deviceType }) => ({ id, name, type: deviceType })),
     ];
-    log('HOST broadcast members', members.map(m => m.name));
+    log('HOST broadcast', members.map(m => m.name));
     Object.values(guestsRef.current).forEach(({ conn }) => {
       try { if (conn?.open) conn.send({ type: 'member-list', members }); } catch (_) { }
     });
     setPeers(members.filter(m => m.id !== myPeerIdRef.current));
   };
 
+  // ── Init ───────────────────────────────────────────────────────────────────
   const init = async () => {
     try {
       setStatus('initializing');
-      log('init() start');
+      log('init()');
 
       const res = await fetch('https://api.ipify.org?format=json');
       const { ip } = await res.json();
       setPublicIp(ip);
-      log('got IP', ip);
 
       const ipHash = btoa(ip).replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toLowerCase();
       const anchorId = `${ROOM_PREFIX}-${ipHash}`;
@@ -97,7 +212,6 @@ export default function PeerFileShare() {
       if (!window.Peer) throw new Error('PeerJS not loaded.');
 
       const randomId = `${ROOM_PREFIX}-m-${Math.random().toString(36).slice(2, 10)}`;
-      log('registering mainPeer', randomId);
       const mainPeer = new window.Peer(randomId, { secure: true });
       mainPeerRef.current = mainPeer;
 
@@ -108,65 +222,54 @@ export default function PeerFileShare() {
         tryClaimAnchor(anchorId);
       });
 
+      // Incoming file-transfer connection (binary)
       mainPeer.on('connection', (conn) => {
-        if (conn.label === 'file-bin') {
-          // Binary data conn — pipe ArrayBuffers to handleFileData
-          log('mainPeer incoming bin-conn from', conn.peer);
-          fileConnsRef.current[conn.peer + '-bin'] = conn;
-          conn.on('data', (data) => handleFileData(conn.peer, data, true));
-          conn.on('close', () => { delete fileConnsRef.current[conn.peer + '-bin']; });
-          conn.on('error', (err) => log('binConn error', err.type));
-        } else {
-          log('mainPeer incoming file-conn from', conn.peer);
-          setupFileConn(conn);
-        }
+        log('incoming conn label=' + conn.label + ' from', conn.peer);
+        if (conn.label === 'ft') setupFileConn(conn);
+        // Signaling conns from other guests go through anchorPeer, not here
       });
 
       mainPeer.on('error', (err) => {
-        log('mainPeer ERROR', err.type);
-        setError('mainPeer error: ' + err.type);
+        log('mainPeer error', err.type);
+        setError('mainPeer: ' + err.type);
         setStatus('error');
       });
 
     } catch (err) {
-      log('init ERROR', err.message);
+      log('init error', err.message);
       setError(err.message);
       setStatus('error');
     }
   };
 
+  // ── Host / anchor ──────────────────────────────────────────────────────────
   const tryClaimAnchor = (anchorId) => {
     log('tryClaimAnchor', anchorId);
+    if (anchorPeerRef.current) { anchorPeerRef.current.destroy(); anchorPeerRef.current = null; }
 
-    if (anchorPeerRef.current) {
-      anchorPeerRef.current.destroy();
-      anchorPeerRef.current = null;
-    }
+    const ap = new window.Peer(anchorId, { secure: true });
+    anchorPeerRef.current = ap;
 
-    const anchorPeer = new window.Peer(anchorId, { secure: true });
-    anchorPeerRef.current = anchorPeer;
-
-    anchorPeer.on('open', (id) => {
-      log('anchorPeer open → I am HOST', id);
+    ap.on('open', () => {
+      log('HOST');
       isHostRef.current = true;
       setIsHost(true);
       setStatus('ready');
-
-      anchorPeer.on('connection', (conn) => {
-        log('HOST got guest signaling conn from', conn.peer);
+      ap.on('connection', (conn) => {
+        log('HOST got signaling conn from', conn.peer);
         handleGuestSignaling(conn);
       });
     });
 
-    anchorPeer.on('error', (err) => {
-      log('anchorPeer ERROR', err.type);
+    ap.on('error', (err) => {
+      log('anchorPeer error', err.type);
       anchorPeerRef.current = null;
       becomeGuest(anchorId);
     });
   };
 
   const becomeGuest = (anchorId) => {
-    log('becomeGuest → connecting to anchor', anchorId);
+    log('GUEST → connecting to', anchorId);
     isHostRef.current = false;
     setIsHost(false);
     setStatus('ready');
@@ -175,84 +278,58 @@ export default function PeerFileShare() {
     hostConnRef.current = conn;
 
     conn.on('open', () => {
-      log('GUEST connected to host, sending hello');
-      // FIX: spread myMeta() first, then set type='hello' last so it wins
+      log('GUEST connected, sending hello');
       const meta = myMeta();
       conn.send({ ...meta, type: 'hello' });
     });
 
     conn.on('data', (data) => {
-      if (!data || typeof data !== 'object') return;
-      if (data.type === 'member-list') {
-        log('GUEST received member-list', data.members?.map(m => m.name));
+      if (data?.type === 'member-list') {
+        log('GUEST got member-list', data.members?.map(m => m.name));
         setPeers((data.members || []).filter(m => m.id !== myPeerIdRef.current));
       }
     });
 
     conn.on('close', () => {
-      log('GUEST: host conn closed, racing to claim anchor');
+      log('GUEST: host closed, racing for anchor');
       hostConnRef.current = null;
       setPeers([]);
       setStatus('initializing');
       setTimeout(() => tryClaimAnchor(anchorIdRef.current), 500 + Math.random() * 1000);
     });
 
-    conn.on('error', (err) => {
-      log('GUEST hostConn error', err.type);
-    });
+    conn.on('error', (err) => log('hostConn error', err.type));
   };
 
   const handleGuestSignaling = (conn) => {
-    // FIX 2: buffer any data that arrives before we attach the handler.
-    // PeerJS buffers incoming data internally so conn.on('data') set in 'open'
-    // is fine — but if conn is already open when we get here, data may have
-    // already queued. The safest pattern: attach handlers immediately (before open),
-    // then send the member-list ack once we have an id from the hello message.
-    const pending = [];
-    let ready = false;
-
-    const processMessage = (data) => {
+    const pending = []; let ready = false;
+    const process = (data) => {
       if (!data || typeof data !== 'object') return;
       if (data.type === 'hello') {
-        log('HOST received hello from', data.name);
-        guestsRef.current[data.id] = {
-          id: data.id, name: data.name, deviceType: data.deviceType, conn,
-        };
+        log('HOST got hello from', data.name);
+        guestsRef.current[data.id] = { id: data.id, name: data.name, deviceType: data.deviceType, conn };
         broadcastMembers();
       }
     };
-
-    conn.on('open', () => {
-      log('HOST: guest signaling conn open', conn.peer);
-      ready = true;
-      // Drain anything that arrived before open
-      pending.forEach(processMessage);
-      pending.length = 0;
-    });
-
-    conn.on('data', (data) => {
-      if (!ready) { pending.push(data); return; }
-      processMessage(data);
-    });
-
+    conn.on('open', () => { ready = true; pending.forEach(process); pending.length = 0; });
+    conn.on('data', (d) => ready ? process(d) : pending.push(d));
     conn.on('close', () => {
-      const entry = Object.values(guestsRef.current).find(g => g.conn === conn);
-      if (entry) {
-        log('HOST: guest left', entry.name);
-        delete guestsRef.current[entry.id];
-        broadcastMembers();
-      }
+      const e = Object.values(guestsRef.current).find(g => g.conn === conn);
+      if (e) { log('HOST: guest left', e.name); delete guestsRef.current[e.id]; broadcastMembers(); }
     });
-
-    conn.on('error', (err) => log('HOST guestSignaling error', err.type));
+    conn.on('error', (err) => log('guestSig error', err.type));
   };
 
   // ── File transfer ──────────────────────────────────────────────────────────
-
-  const getOrOpenFileConn = (targetId) => {
-    const existing = fileConnsRef.current[targetId];
-    if (existing?.open) return existing;
-    const conn = mainPeerRef.current.connect(targetId, { reliable: true, serialization: 'json' });
+  const getFileConn = (targetId) => {
+    const ex = fileConnsRef.current[targetId];
+    if (ex?.open) return ex;
+    // label='ft', serialization='binary' → ArrayBuffer in / ArrayBuffer out
+    const conn = mainPeerRef.current.connect(targetId, {
+      reliable: true,
+      serialization: 'binary',
+      label: 'ft',
+    });
     setupFileConn(conn);
     return conn;
   };
@@ -260,71 +337,64 @@ export default function PeerFileShare() {
   const setupFileConn = (conn) => {
     fileConnsRef.current[conn.peer] = conn;
     conn.on('open', () => log('fileConn open', conn.peer));
-    conn.on('data', (data) => {
-      log('fileConn data from', conn.peer + ' type=' + (data?.type || typeof data));
-      handleFileData(conn.peer, data);
+    conn.on('data', (raw) => {
+      // PeerJS binary mode delivers ArrayBuffer
+      if (!(raw instanceof ArrayBuffer)) {
+        log('fileConn unexpected data type', typeof raw);
+        return;
+      }
+      const msg = parseMessage(raw);
+      if (!msg) return;
+
+      if (msg.msgType === MSG_FILE_START) {
+        log('FILE_START', msg.name + ' chunks=' + msg.numChunks);
+        incomingRef.current[msg.transferId] = {
+          name: msg.name, mime: msg.mime,
+          numChunks: msg.numChunks,
+          chunks: new Map(),
+        };
+        setTransfers(prev => [{
+          id: msg.transferId, role: 'receive', name: msg.name,
+          progress: 0, status: 'receiving', from: conn.peer,
+        }, ...prev]);
+
+      } else if (msg.msgType === MSG_FILE_CHUNK) {
+        const entry = incomingRef.current[msg.transferId];
+        if (!entry) return;
+        entry.chunks.set(msg.index, msg.data);
+        const progress = Math.round((entry.chunks.size / entry.numChunks) * 100);
+        setTransfers(prev => prev.map(t =>
+          t.id === msg.transferId ? { ...t, progress } : t
+        ));
+
+      } else if (msg.msgType === MSG_FILE_END) {
+        const entry = incomingRef.current[msg.transferId];
+        if (!entry) return;
+        log('FILE_END, reassembling', msg.transferId);
+
+        // Sort chunks by index and concatenate
+        const sorted = [...entry.chunks.entries()]
+          .sort(([a], [b]) => a - b)
+          .map(([, buf]) => new Uint8Array(buf));
+
+        const totalLen = sorted.reduce((n, a) => n + a.length, 0);
+        const result = new Uint8Array(totalLen);
+        let offset = 0;
+        for (const arr of sorted) { result.set(arr, offset); offset += arr.length; }
+
+        const blob = new Blob([result], { type: entry.mime || 'application/octet-stream' });
+        delete incomingRef.current[msg.transferId];
+
+        setTransfers(prev => prev.map(t =>
+          t.id === msg.transferId
+            ? { ...t, status: 'complete', progress: 100, file: blob }
+            : t
+        ));
+      }
     });
     conn.on('close', () => { delete fileConnsRef.current[conn.peer]; });
     conn.on('error', (err) => log('fileConn error', err.type));
   };
-
-  const incomingChunks = useRef({}); // { transferId: { meta, receivedBytes, arrays[] } }
-  const activeBinFrom = useRef({}); // { peerId: transferId } — maps binary conn peer to active transfer
-
-  const handleFileData = (fromId, data, isBinary = false) => {
-    if (isBinary) {
-      // Raw ArrayBuffer chunk — find the active transfer from this peer
-      const transferId = activeBinFrom.current[fromId];
-      if (!transferId) return;
-      const entry = incomingChunks.current[transferId];
-      if (!entry) return;
-
-      entry.arrays.push(new Uint8Array(data));
-      entry.receivedBytes += data.byteLength;
-      const progress = Math.min(99, Math.round((entry.receivedBytes / entry.totalSize) * 100));
-      setTransfers(prev => prev.map(t => t.id === transferId ? { ...t, progress } : t));
-      return;
-    }
-
-    if (!data || typeof data !== 'object') return;
-
-    if (data.type === 'file-start') {
-      log('file-start', data.name + ' size=' + data.totalSize);
-      incomingChunks.current[data.transferId] = {
-        name: data.name, mimeType: data.mimeType,
-        totalSize: data.totalSize,
-        receivedBytes: 0, arrays: [],
-      };
-      // Mark this peer as actively sending this transfer
-      activeBinFrom.current[fromId] = data.transferId;
-      setTransfers(prev => [{
-        id: data.transferId, role: 'receive', name: data.name,
-        size: data.totalSize, progress: 0, status: 'receiving', from: fromId,
-      }, ...prev]);
-
-    } else if (data.type === 'file-end') {
-      const entry = incomingChunks.current[data.transferId];
-      if (!entry) return;
-      log('file-end, reassembling', entry.name);
-
-      const total = entry.arrays.reduce((n, a) => n + a.length, 0);
-      const result = new Uint8Array(total);
-      let offset = 0;
-      for (const arr of entry.arrays) { result.set(arr, offset); offset += arr.length; }
-
-      const blob = new Blob([result], { type: entry.mimeType || '' });
-      delete incomingChunks.current[data.transferId];
-      delete activeBinFrom.current[fromId];
-
-      setTransfers(prev => prev.map(t =>
-        t.id === data.transferId
-          ? { ...t, status: 'complete', progress: 100, file: blob }
-          : t
-      ));
-    }
-  };
-
-  const CHUNK_SIZE = 64 * 1024; // 64KB binary chunks — no base64 overhead
 
   const sendFile = (targetId, file) => {
     if (!file) return;
@@ -334,53 +404,41 @@ export default function PeerFileShare() {
       size: file.size, progress: 0, status: 'sending', to: targetId,
     }, ...prev]);
 
-    // Signal conn (json) — sends metadata/control messages
-    const sigConn = getOrOpenFileConn(targetId);
-    // Binary conn — sends raw ArrayBuffer chunks
-    const binKey = targetId + '-bin';
-    let binConn = fileConnsRef.current[binKey];
-    if (!binConn || !binConn.open) {
-      binConn = mainPeerRef.current.connect(targetId, { reliable: true, serialization: 'binary', label: 'file-bin' });
-      fileConnsRef.current[binKey] = binConn;
-      binConn.on('error', (err) => log('binConn error', err.type));
-      binConn.on('close', () => { delete fileConnsRef.current[binKey]; });
-    }
+    const conn = getFileConn(targetId);
 
     const doSend = () => {
       const reader = new FileReader();
       reader.onload = (e) => {
         const buffer = e.target.result;
-        const totalSize = buffer.byteLength;
-        const numChunks = Math.ceil(totalSize / CHUNK_SIZE);
+        const numChunks = Math.ceil(buffer.byteLength / CHUNK_SIZE);
+        log('sending', file.name + ' chunks=' + numChunks);
 
-        // Send metadata over json conn
-        sigConn.send({ type: 'file-start', transferId, name: file.name, mimeType: file.type, totalSize, numChunks });
+        // 1. Send FILE_START
+        conn.send(buildFileStart(transferId, numChunks, file.name, file.type));
 
-        let chunkIdx = 0;
-        const sendNextChunk = () => {
-          if (chunkIdx >= numChunks) {
-            sigConn.send({ type: 'file-end', transferId });
+        // 2. Send chunks one at a time with setTimeout to avoid overwhelming the buffer
+        let idx = 0;
+        const sendNext = () => {
+          if (idx >= numChunks) {
+            // 3. Send FILE_END
+            conn.send(buildFileEnd(transferId));
             setTransfers(prev => prev.map(t =>
               t.id === transferId ? { ...t, status: 'complete', progress: 100 } : t
             ));
             return;
           }
-          const start = chunkIdx * CHUNK_SIZE;
-          const end = Math.min(start + CHUNK_SIZE, totalSize);
-          // Send raw binary — no base64 encoding
-          binConn.send(buffer.slice(start, end));
-
-          const progress = Math.round(((chunkIdx + 1) / numChunks) * 100);
+          const start = idx * CHUNK_SIZE;
+          const chunk = buffer.slice(start, start + CHUNK_SIZE);
+          conn.send(buildFileChunk(transferId, idx, chunk));
           setTransfers(prev => prev.map(t =>
-            t.id === transferId ? { ...t, progress } : t
+            t.id === transferId
+              ? { ...t, progress: Math.round(((idx + 1) / numChunks) * 100) }
+              : t
           ));
-          chunkIdx++;
-          setTimeout(sendNextChunk, 5);
+          idx++;
+          setTimeout(sendNext, 0); // yield to event loop between chunks
         };
-
-        // Start sending chunks after binConn is open
-        if (binConn.open) sendNextChunk();
-        else binConn.on('open', sendNextChunk);
+        sendNext();
       };
       reader.onerror = () => setTransfers(prev => prev.map(t =>
         t.id === transferId ? { ...t, status: 'error' } : t
@@ -388,18 +446,21 @@ export default function PeerFileShare() {
       reader.readAsArrayBuffer(file);
     };
 
-    if (sigConn.open) setTimeout(doSend, 100);
-    else sigConn.on('open', () => setTimeout(doSend, 100));
+    if (conn.open) doSend();
+    else conn.on('open', doSend);
   };
 
   const downloadFile = (transfer) => {
     const url = URL.createObjectURL(transfer.file);
-    const a = document.createElement('a'); a.href = url; a.download = transfer.name; a.click();
+    const a = document.createElement('a');
+    a.href = url; a.download = transfer.name; a.click();
     URL.revokeObjectURL(url);
   };
 
-  const getDeviceIcon = (type) => type === 'mobile' ? <Smartphone size={32} /> : <Laptop size={32} />;
+  const getDeviceIcon = (type) =>
+    type === 'mobile' ? <Smartphone size={32} /> : <Laptop size={32} />;
 
+  // ── Error screen ───────────────────────────────────────────────────────────
   if (status === 'error') {
     return (
       <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl border border-red-100 shadow-sm">
@@ -414,6 +475,7 @@ export default function PeerFileShare() {
     );
   }
 
+  // ── Main UI ────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -432,13 +494,7 @@ export default function PeerFileShare() {
             </div>
             <div className="flex justify-between text-xs">
               <span className="text-gray-400">Role:</span>
-              <span className="font-medium text-gray-600">
-                {isHost === null ? '...' : isHost ? '⭐ Host' : 'Guest'}
-              </span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-400">Peer ID:</span>
-              <span className="font-mono text-gray-500 text-[10px]">{myPeerId.slice(-12) || '...'}</span>
+              <span className="font-medium text-gray-600">{isHost === null ? '...' : isHost ? '⭐ Host' : 'Guest'}</span>
             </div>
             <div className="flex justify-between text-xs">
               <span className="text-gray-400">Status:</span>
@@ -456,7 +512,7 @@ export default function PeerFileShare() {
             </h3>
             <p className="text-sm text-gray-400 leading-relaxed">
               The first device becomes the <strong>Host</strong>. Others join as guests.
-              Files transfer <strong>directly</strong> P2P.
+              Files transfer <strong>directly</strong> P2P — never through a server.
             </p>
           </div>
           <div className="absolute top-[-20%] right-[-10%] opacity-10"><ArrowRightLeft size={160} /></div>
