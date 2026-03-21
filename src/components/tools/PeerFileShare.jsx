@@ -243,7 +243,8 @@ export default function PeerFileShare() {
   const getOrOpenFileConn = (targetId) => {
     const existing = fileConnsRef.current[targetId];
     if (existing?.open) return existing;
-    const conn = mainPeerRef.current.connect(targetId, { reliable: true });
+    // 'binary' serialization ensures ArrayBuffer arrives as ArrayBuffer, not plain object
+    const conn = mainPeerRef.current.connect(targetId, { reliable: true, serialization: 'binary' });
     setupFileConn(conn);
     return conn;
   };
@@ -256,20 +257,29 @@ export default function PeerFileShare() {
   };
 
   const handleFileData = (fromId, data) => {
-    log('handleFileData from', fromId + ' type=' + (data?.type || typeof data) + ' isAB=' + (data instanceof ArrayBuffer) + ' isBlob=' + (data instanceof Blob));
-    if (data && typeof data === 'object' && !(data instanceof ArrayBuffer) && !(data instanceof Blob) && data.type === 'file-meta') {
-      setTransfers(prev => [{
-        id: data.transferId, role: 'receive', name: data.name,
-        size: data.size, mimeType: data.mimeType || '',
-        progress: 0, status: 'receiving', from: fromId,
-      }, ...prev]);
-    } else if (data instanceof ArrayBuffer || data instanceof Blob) {
-      log('handleFileData: got binary', 'size=' + (data.byteLength ?? data.size));
-      const blob = data instanceof ArrayBuffer ? new Blob([data]) : data;
+    // String = JSON metadata sent over binary connection
+    if (typeof data === 'string') {
+      try {
+        const parsed = JSON.parse(data);
+        if (parsed.type === 'file-meta') {
+          log('handleFileData: got file-meta', parsed.name);
+          setTransfers(prev => [{
+            id: parsed.transferId, role: 'receive', name: parsed.name,
+            size: parsed.size, mimeType: parsed.mimeType || '',
+            progress: 0, status: 'receiving', from: fromId,
+          }, ...prev]);
+        }
+      } catch (_) { }
+      return;
+    }
+    // ArrayBuffer = actual file binary
+    if (data instanceof ArrayBuffer) {
+      log('handleFileData: got ArrayBuffer', data.byteLength);
+      const blob = new Blob([data]);
       setTransfers(prev => {
         const updated = [...prev];
         const idx = updated.findIndex(t => t.from === fromId && t.status === 'receiving');
-        log('handleFileData: match idx', idx + ' fromId=' + fromId);
+        log('handleFileData: match idx', idx);
         if (idx !== -1) {
           const typed = updated[idx].mimeType
             ? new Blob([blob], { type: updated[idx].mimeType }) : blob;
@@ -277,7 +287,9 @@ export default function PeerFileShare() {
         }
         return updated;
       });
+      return;
     }
+    log('handleFileData: unhandled data type', typeof data);
   };
 
   const sendFile = (targetId, file) => {
@@ -289,7 +301,8 @@ export default function PeerFileShare() {
     }, ...prev]);
     const conn = getOrOpenFileConn(targetId);
     const doSend = () => {
-      conn.send({ type: 'file-meta', transferId, name: file.name, size: file.size, mimeType: file.type });
+      // Send metadata as JSON string (binary conn doesn't support plain objects)
+      conn.send(JSON.stringify({ type: 'file-meta', transferId, name: file.name, size: file.size, mimeType: file.type }));
       const reader = new FileReader();
       reader.onload = (e) => {
         conn.send(e.target.result);
