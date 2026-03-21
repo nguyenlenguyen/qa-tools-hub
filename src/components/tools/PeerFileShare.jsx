@@ -1,7 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Share2, Smartphone, Laptop, FileUp, Download, CheckCircle, XCircle, Loader2, Info, Users, ArrowRightLeft } from 'lucide-react';
 
-const NTFY_TOPIC_PREFIX = 'qa-tools-hub-share';
+// PeerJS default public server — used for both WebRTC signaling AND peer discovery
+// GET https://0.peerjs.com/peerjs/peers  →  returns array of all connected peer IDs
+const PEERJS_HOST = '0.peerjs.com';
+const PEERJS_PORT = 443;
+const PEERJS_PATH = '/';
+
+// Room prefix encoded in the PeerJS ID so we can filter peers in the same "room"
+// Format:  qafs-<ipHash>-<randomSuffix>
+const ROOM_PREFIX = 'qafs';
 
 const DEVICE_NAMES = [
   'Swift Fox', 'Bold Eagle', 'Cool Penguin', 'Lazy Panda', 'Happy Dolphin',
@@ -9,17 +17,18 @@ const DEVICE_NAMES = [
 ];
 
 export default function PeerFileShare() {
-  const [peerId, setPeerId] = useState('');
-  const [roomTopic, setRoomTopic] = useState('');
+  const [myPeerId, setMyPeerId] = useState('');
+  const [roomId, setRoomId] = useState('');
   const [publicIp, setPublicIp] = useState('');
   const [deviceName] = useState(() => {
     const saved = localStorage.getItem('qa-tools-peer-name');
-    const isAnimalName = DEVICE_NAMES.some(name => saved && saved.startsWith(name));
-    if (saved && isAnimalName) return saved;
-    const randomName = DEVICE_NAMES[Math.floor(Math.random() * DEVICE_NAMES.length)] + ' ' + Math.floor(Math.random() * 100);
-    localStorage.setItem('qa-tools-peer-name', randomName);
-    return randomName;
+    const isAnimal = DEVICE_NAMES.some(n => saved && saved.startsWith(n));
+    if (saved && isAnimal) return saved;
+    const name = DEVICE_NAMES[Math.floor(Math.random() * DEVICE_NAMES.length)] + ' ' + Math.floor(Math.random() * 100);
+    localStorage.setItem('qa-tools-peer-name', name);
+    return name;
   });
+
   const [peers, setPeers] = useState([]);
   const [connections, setConnections] = useState({});
   const [transfers, setTransfers] = useState([]);
@@ -27,85 +36,75 @@ export default function PeerFileShare() {
   const [error, setError] = useState(null);
 
   const peerRef = useRef(null);
-  const ntfySourceRef = useRef(null);
-  // Refs so closures always see the latest values without re-creating intervals/SSE
-  const peerIdRef = useRef('');
-  const roomTopicRef = useRef('');
+  const myPeerIdRef = useRef('');
+  const roomIdRef = useRef('');
   const deviceNameRef = useRef(deviceName);
-  const heartbeatRef = useRef(null);
-  const staleCheckerRef = useRef(null);
+  const knownPeers = useRef({}); // { peerId: { id, name, type } }
+  const connectedRef = useRef({}); // { peerId: DataConnection | 'pending' }
+  const pollRef = useRef(null);
 
   useEffect(() => {
-    initDiscovery();
+    init();
     return () => {
       if (peerRef.current) peerRef.current.destroy();
-      if (ntfySourceRef.current) ntfySourceRef.current.close();
-      if (heartbeatRef.current) clearInterval(heartbeatRef.current);
-      if (staleCheckerRef.current) clearInterval(staleCheckerRef.current);
+      if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line
 
-  const startHeartbeat = () => {
-    if (heartbeatRef.current) clearInterval(heartbeatRef.current);
-    if (staleCheckerRef.current) clearInterval(staleCheckerRef.current);
-
-    // Heartbeat every 10s — stable, not tied to React state
-    heartbeatRef.current = setInterval(() => {
-      if (peerIdRef.current && roomTopicRef.current) {
-        sendPresence(roomTopicRef.current, peerIdRef.current, deviceNameRef.current, false);
-      }
-    }, 10000);
-
-    // Stale = missed 3 heartbeats (30s)
-    staleCheckerRef.current = setInterval(() => {
-      setPeers(prev => prev.filter(p => Date.now() - (p.lastSeen || 0) < 35000));
-    }, 5000);
-  };
-
-  const initDiscovery = async () => {
+  // ─── Init ─────────────────────────────────────────────────────────────────
+  const init = async () => {
     try {
       setStatus('initializing');
 
-      const ipRes = await fetch('https://api.ipify.org?format=json');
-      const { ip } = await ipRes.json();
+      // 1. Get public IP → derive shared room ID for devices on same network
+      const res = await fetch('https://api.ipify.org?format=json');
+      const { ip } = await res.json();
       setPublicIp(ip);
 
-      const topic = `${NTFY_TOPIC_PREFIX}-${btoa(ip).replace(/=/g, '').slice(0, 10)}`;
-      roomTopicRef.current = topic;
-      setRoomTopic(topic);
+      const ipHash = btoa(ip).replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toLowerCase();
+      const room = `${ROOM_PREFIX}-${ipHash}`;
+      roomIdRef.current = room;
+      setRoomId(room);
 
-      if (!window.Peer) {
-        throw new Error('PeerJS not loaded. Check your internet connection.');
-      }
+      // 2. Register on PeerJS with ID = room-<randomSuffix>
+      //    This lets us call /peerjs/peers and filter by room prefix for discovery
+      if (!window.Peer) throw new Error('PeerJS not loaded.');
 
-      const myPeer = new window.Peer();
-      peerRef.current = myPeer;
+      const randomSuffix = Math.random().toString(36).slice(2, 8);
+      const desiredId = `${room}-${randomSuffix}`;
 
-      myPeer.on('open', (id) => {
-        peerIdRef.current = id;
-        setPeerId(id);
+      const peer = new window.Peer(desiredId, {
+        host: PEERJS_HOST,
+        port: PEERJS_PORT,
+        path: PEERJS_PATH,
+        secure: true,
+      });
+      peerRef.current = peer;
+
+      peer.on('open', (id) => {
+        myPeerIdRef.current = id;
+        setMyPeerId(id);
         setStatus('ready');
 
-        // Subscribe SSE first, then announce — so we don't miss replies
-        subscribeToTopic(topic, id);
-
-        // Burst: announce 3 times to survive SSE setup delay on the other side
-        // All with isNew=true so existing peers reply back once with their presence
-        const announce = () => sendPresence(topic, id, deviceNameRef.current, true);
-        announce();
-        setTimeout(announce, 2500);
-        setTimeout(announce, 6000);
-
-        startHeartbeat();
+        // Poll immediately, then every 5s
+        pollPeers();
+        pollRef.current = setInterval(pollPeers, 5000);
       });
 
-      myPeer.on('connection', (conn) => {
+      // Incoming connection from a peer that connected to us
+      peer.on('connection', (conn) => {
         setupConnection(conn);
       });
 
-      myPeer.on('error', (err) => {
+      peer.on('error', (err) => {
         console.error('Peer error:', err);
-        setError('Connection error: ' + err.type);
+        if (err.type === 'unavailable-id') {
+          // ID collision — retry with a new suffix
+          peer.destroy();
+          init();
+        } else {
+          setError('Connection error: ' + err.type);
+        }
       });
 
     } catch (err) {
@@ -115,116 +114,96 @@ export default function PeerFileShare() {
     }
   };
 
-  const subscribeToTopic = (topic, myId) => {
-    // `since=<unix_seconds>` = only receive messages published after this moment.
-    // since=0 means "from epoch" (entire history!) — must use current time instead.
-    const sinceTs = Math.floor(Date.now() / 1000);
-    const source = new EventSource(`https://ntfy.sh/${topic}/sse?since=${sinceTs}`);
-    ntfySourceRef.current = source;
+  // ─── Discovery: poll PeerJS server, connect to room peers ─────────────────
+  const pollPeers = async () => {
+    const myId = myPeerIdRef.current;
+    const room = roomIdRef.current;
+    if (!myId || !room) return;
 
-    source.onmessage = (event) => {
-      try {
-        const envelope = JSON.parse(event.data);
-        // ntfy SSE: real messages have `event:"message"` and a `message` string field
-        if (!envelope.message) return;
+    try {
+      const res = await fetch(`https://${PEERJS_HOST}/peerjs/peers`);
+      const allIds = await res.json(); // string[]
 
-        const payload = JSON.parse(envelope.message);
-        if (payload.type !== 'presence') return;
+      // Keep only peers in our room
+      const roomIds = allIds.filter(id => id !== myId && id.startsWith(room + '-'));
 
-        const currentId = peerIdRef.current || myId;
-        if (payload.peerId === currentId) return; // ignore our own
-
-        const now = Date.now();
-        addPeer({
-          id: payload.peerId,
-          name: payload.deviceName,
-          type: /Android|iPhone|iPad/i.test(payload.userAgent) ? 'mobile' : 'desktop',
-          lastSeen: now
-        });
-
-        // Reply once when a device announces itself as new/rejoining.
-        // isNew=false on our reply prevents the other side from replying back → no loop.
-        if (payload.isNew) {
-          sendPresence(topic, currentId, deviceNameRef.current, false);
+      // Connect to peers we haven't connected to yet
+      roomIds.forEach(peerId => {
+        if (!connectedRef.current[peerId]) {
+          connectToPeer(peerId);
         }
-      } catch (_) {
-        // keepalive / open events — ignore
-      }
-    };
+      });
 
-    source.onerror = () => {
-      // EventSource auto-reconnects; nothing to do here
-    };
+      // Remove peers that are no longer on the server
+      const activeSet = new Set(roomIds);
+      Object.keys(knownPeers.current).forEach(id => {
+        if (!activeSet.has(id)) {
+          delete knownPeers.current[id];
+          delete connectedRef.current[id];
+        }
+      });
+      syncPeers();
+
+    } catch (err) {
+      console.warn('Poll failed:', err);
+    }
   };
 
-  const sendPresence = (topic, id, name, isNew) => {
-    fetch(`https://ntfy.sh/${topic}`, {
-      method: 'POST',
-      body: JSON.stringify({
-        type: 'presence',
-        peerId: id,
-        deviceName: name,
-        userAgent: navigator.userAgent,
-        isNew,
-        timestamp: Date.now()
-      })
-    }).catch(() => { });
+  // ─── Connect to a specific peer ───────────────────────────────────────────
+  const connectToPeer = (targetId) => {
+    if (connectedRef.current[targetId]) return;
+    connectedRef.current[targetId] = 'pending';
+    const conn = peerRef.current.connect(targetId, { reliable: true });
+    setupConnection(conn);
   };
 
-  const addPeer = (newPeer) => {
-    setPeers(prev => {
-      const existsIdx = prev.findIndex(p => p.id === newPeer.id);
-      if (existsIdx !== -1) {
-        const updated = [...prev];
-        updated[existsIdx] = { ...updated[existsIdx], name: newPeer.name, lastSeen: newPeer.lastSeen };
-        return updated;
-      }
-      return [...prev, newPeer];
-    });
-  };
-
+  // ─── Wire up a data connection ────────────────────────────────────────────
   const setupConnection = (conn) => {
     conn.on('open', () => {
-      console.log('Connected to', conn.peer);
+      connectedRef.current[conn.peer] = conn;
       setConnections(prev => ({ ...prev, [conn.peer]: conn }));
+
+      // Exchange our name/device type
+      conn.send({
+        type: 'handshake',
+        name: deviceNameRef.current,
+        deviceType: /Android|iPhone|iPad/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+      });
     });
 
     conn.on('data', (data) => {
-      // FIX: PeerJS v1+ transmits Blobs as ArrayBuffer over the wire.
-      // We need to handle ArrayBuffer and convert it back to a Blob for download.
-      // Plain objects (file-meta) still arrive as objects.
-      if (data && typeof data === 'object' && data.type === 'file-meta') {
-        const newTransfer = {
+      if (!data || typeof data !== 'object') return;
+
+      if (data.type === 'handshake') {
+        knownPeers.current[conn.peer] = {
+          id: conn.peer,
+          name: data.name,
+          type: data.deviceType,
+        };
+        syncPeers();
+
+      } else if (data.type === 'file-meta') {
+        setTransfers(prev => [{
           id: data.transferId,
           role: 'receive',
           name: data.name,
-          progress: 0,
-          status: 'receiving',
           size: data.size,
           mimeType: data.mimeType || '',
-          from: conn.peer
-        };
-        setTransfers(prev => [newTransfer, ...prev]);
+          progress: 0,
+          status: 'receiving',
+          from: conn.peer,
+        }, ...prev]);
 
       } else if (data instanceof ArrayBuffer || data instanceof Blob) {
-        // FIX: convert ArrayBuffer → Blob so URL.createObjectURL works later
         const blob = data instanceof ArrayBuffer ? new Blob([data]) : data;
-
         setTransfers(prev => {
           const updated = [...prev];
-          // Match the most recent pending transfer from this peer
-          const index = updated.findIndex(t => t.from === conn.peer && t.status === 'receiving');
-          if (index !== -1) {
-            // Re-create blob with the correct mime type if we stored it
-            const typed = updated[index].mimeType
-              ? new Blob([blob], { type: updated[index].mimeType })
+          const idx = updated.findIndex(t => t.from === conn.peer && t.status === 'receiving');
+          if (idx !== -1) {
+            const typed = updated[idx].mimeType
+              ? new Blob([blob], { type: updated[idx].mimeType })
               : blob;
-            updated[index] = {
-              ...updated[index],
-              status: 'complete',
-              progress: 100,
-              file: typed
-            };
+            updated[idx] = { ...updated[idx], status: 'complete', progress: 100, file: typed };
           }
           return updated;
         });
@@ -232,115 +211,87 @@ export default function PeerFileShare() {
     });
 
     conn.on('close', () => {
-      setConnections(prev => {
-        const next = { ...prev };
-        delete next[conn.peer];
-        return next;
-      });
-      setPeers(prev => prev.filter(p => p.id !== conn.peer));
+      delete connectedRef.current[conn.peer];
+      delete knownPeers.current[conn.peer];
+      setConnections(prev => { const n = { ...prev }; delete n[conn.peer]; return n; });
+      syncPeers();
     });
 
-    conn.on('error', (err) => {
-      console.error('Connection error:', err);
-    });
+    conn.on('error', (err) => console.warn('Conn error:', err));
   };
 
+  const syncPeers = () => setPeers(Object.values(knownPeers.current));
+
+  // ─── Send file ────────────────────────────────────────────────────────────
   const sendFile = (targetPeerId, file) => {
     if (!file) return;
 
-    let conn = connections[targetPeerId];
-    if (!conn) {
+    let conn = connectedRef.current[targetPeerId];
+    if (!conn || conn === 'pending') {
       conn = peerRef.current.connect(targetPeerId, { reliable: true });
       setupConnection(conn);
     }
 
-    const transferId = Math.random().toString(36).substring(7);
-    const newTransfer = {
-      id: transferId,
-      role: 'send',
-      name: file.name,
-      progress: 0,
-      status: 'sending',
-      size: file.size,
-      to: targetPeerId
-    };
-    setTransfers(prev => [newTransfer, ...prev]);
+    const transferId = Math.random().toString(36).slice(2, 9);
+    setTransfers(prev => [{
+      id: transferId, role: 'send', name: file.name,
+      size: file.size, progress: 0, status: 'sending', to: targetPeerId,
+    }, ...prev]);
 
     const doSend = () => {
-      // FIX: send meta first, then read file as ArrayBuffer and send that.
-      // Sending the raw File/Blob object works in some PeerJS versions but not all;
-      // ArrayBuffer is the most reliable cross-browser approach.
-      conn.send({
-        type: 'file-meta',
-        transferId,
-        name: file.name,
-        size: file.size,
-        mimeType: file.type
-      });
-
+      conn.send({ type: 'file-meta', transferId, name: file.name, size: file.size, mimeType: file.type });
       const reader = new FileReader();
       reader.onload = (e) => {
-        conn.send(e.target.result); // ArrayBuffer — always safe
+        conn.send(e.target.result);
         setTransfers(prev => prev.map(t =>
           t.id === transferId ? { ...t, status: 'complete', progress: 100 } : t
         ));
       };
-      reader.onerror = () => {
-        setTransfers(prev => prev.map(t =>
-          t.id === transferId ? { ...t, status: 'error' } : t
-        ));
-      };
+      reader.onerror = () => setTransfers(prev => prev.map(t =>
+        t.id === transferId ? { ...t, status: 'error' } : t
+      ));
       reader.readAsArrayBuffer(file);
     };
 
-    if (conn.open) {
-      doSend();
-    } else {
-      conn.on('open', doSend);
-    }
+    if (conn.open) doSend();
+    else conn.on('open', doSend);
   };
 
+  // ─── Download ─────────────────────────────────────────────────────────────
   const downloadFile = (transfer) => {
     const url = URL.createObjectURL(transfer.file);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = transfer.name;
-    a.click();
+    a.href = url; a.download = transfer.name; a.click();
     URL.revokeObjectURL(url);
   };
 
-  const getDeviceIcon = (type) => {
-    return type === 'mobile' ? <Smartphone size={32} /> : <Laptop size={32} />;
-  };
+  const getDeviceIcon = (type) =>
+    type === 'mobile' ? <Smartphone size={32} /> : <Laptop size={32} />;
 
-  // FIX: filter by peerId (unique), NOT by name (can collide)
-  const filteredPeers = peers.filter(peer => peer.id !== peerId);
+  const filteredPeers = peers.filter(p => p.id !== myPeerId);
 
+  // ─── Error screen ─────────────────────────────────────────────────────────
   if (status === 'error') {
     return (
       <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl border border-red-100 shadow-sm">
         <XCircle className="text-red-500 mb-4" size={48} />
         <h3 className="text-xl font-bold text-gray-900 mb-2">Setup Failed</h3>
         <p className="text-gray-500 text-center max-w-md">{error}</p>
-        <button
-          onClick={() => window.location.reload()}
-          className="mt-6 px-6 py-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors"
-        >
+        <button onClick={() => window.location.reload()}
+          className="mt-6 px-6 py-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors">
           Try Again
         </button>
       </div>
     );
   }
 
+  // ─── Main UI ──────────────────────────────────────────────────────────────
   return (
     <div className="space-y-6">
-      {/* Header Info */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
           <div className="flex items-center gap-4 mb-4">
-            <div className="p-3 bg-blue-50 text-blue-600 rounded-xl">
-              <Share2 size={24} />
-            </div>
+            <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><Share2 size={24} /></div>
             <div>
               <h3 className="font-bold text-gray-900">Your Device</h3>
               <p className="text-sm text-gray-500">{deviceName}</p>
@@ -348,7 +299,7 @@ export default function PeerFileShare() {
           </div>
           <div className="space-y-2">
             <div className="flex justify-between text-xs">
-              <span className="text-gray-400">Public IP Group:</span>
+              <span className="text-gray-400">Network Group:</span>
               <span className="font-mono text-gray-600 font-medium">{publicIp || 'Detecting...'}</span>
             </div>
             <div className="flex justify-between text-xs">
@@ -363,12 +314,11 @@ export default function PeerFileShare() {
         <div className="bg-gray-900 p-6 rounded-2xl shadow-xl text-white relative overflow-hidden">
           <div className="relative z-10">
             <h3 className="font-bold mb-2 flex items-center gap-2">
-              <Info size={18} className="text-blue-400" />
-              How it works
+              <Info size={18} className="text-blue-400" /> How it works
             </h3>
             <p className="text-sm text-gray-400 leading-relaxed">
-              Devices on the same local network share the same public IP. This tool groups you automatically.
-              Files are sent <strong>directly</strong> between devices using WebRTC (Peer-to-Peer).
+              Devices on the same network share the same public IP and are grouped automatically.
+              Files are sent <strong>directly</strong> between devices via WebRTC (P2P).
             </p>
           </div>
           <div className="absolute top-[-20%] right-[-10%] opacity-10">
@@ -397,7 +347,7 @@ export default function PeerFileShare() {
                 <Share2 className="text-gray-200" size={32} />
               </div>
               <p className="text-gray-900 font-medium">Looking for devices...</p>
-              <p className="text-gray-400 text-sm mt-1">Open this page on another phone or laptop in the same Wi-Fi.</p>
+              <p className="text-gray-400 text-sm mt-1">Open this page on another device on the same Wi-Fi.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -409,19 +359,14 @@ export default function PeerFileShare() {
                     </div>
                     <div>
                       <h4 className="font-bold text-gray-900">{peer.name}</h4>
-                      <p className="text-[10px] font-mono text-gray-400 uppercase tracking-widest">{peer.id.substring(0, 8)}</p>
+                      <p className="text-[10px] font-mono text-gray-400 uppercase tracking-widest">{peer.id.slice(-8)}</p>
                     </div>
                   </div>
-
                   <label className="block">
-                    <input
-                      type="file"
-                      className="hidden"
-                      onChange={(e) => sendFile(peer.id, e.target.files[0])}
-                    />
+                    <input type="file" className="hidden"
+                      onChange={(e) => sendFile(peer.id, e.target.files[0])} />
                     <div className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-600 cursor-pointer hover:bg-blue-500 hover:text-white hover:border-blue-500 transition-all shadow-sm">
-                      <FileUp size={16} />
-                      Send File
+                      <FileUp size={16} /> Send File
                     </div>
                   </label>
                 </div>
@@ -452,32 +397,21 @@ export default function PeerFileShare() {
                   </div>
                   <div className="flex items-center gap-3">
                     <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full transition-all duration-300 ${t.status === 'complete' ? 'bg-emerald-500' : t.status === 'error' ? 'bg-red-400' : 'bg-blue-500'}`}
-                        style={{ width: `${t.progress}%` }}
-                      />
+                      <div className={`h-full transition-all duration-300 ${t.status === 'complete' ? 'bg-emerald-500' : t.status === 'error' ? 'bg-red-400' : 'bg-blue-500'}`}
+                        style={{ width: `${t.progress}%` }} />
                     </div>
                     <span className="text-xs font-medium text-gray-600 w-8">{t.progress}%</span>
                   </div>
                 </div>
                 <div>
-                  {t.status === 'complete' ? (
-                    t.role === 'receive' ? (
-                      <button
-                        onClick={() => downloadFile(t)}
-                        className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
-                        title="Download File"
-                      >
-                        <CheckCircle size={20} />
-                      </button>
-                    ) : (
-                      <CheckCircle className="text-emerald-500" size={20} />
-                    )
-                  ) : t.status === 'error' ? (
-                    <XCircle className="text-red-400" size={20} />
-                  ) : (
-                    <Loader2 className="text-blue-500 animate-spin" size={20} />
-                  )}
+                  {t.status === 'complete'
+                    ? t.role === 'receive'
+                      ? <button onClick={() => downloadFile(t)} className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"><CheckCircle size={20} /></button>
+                      : <CheckCircle className="text-emerald-500" size={20} />
+                    : t.status === 'error'
+                      ? <XCircle className="text-red-400" size={20} />
+                      : <Loader2 className="text-blue-500 animate-spin" size={20} />
+                  }
                 </div>
               </div>
             ))}
