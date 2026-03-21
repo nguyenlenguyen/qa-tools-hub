@@ -250,7 +250,11 @@ export default function PeerFileShare() {
 
   const setupFileConn = (conn) => {
     fileConnsRef.current[conn.peer] = conn;
-    conn.on('data', (data) => handleFileData(conn.peer, data));
+    conn.on('open', () => log('fileConn open', conn.peer));
+    conn.on('data', (data) => {
+      log('fileConn data from', conn.peer + ' type=' + (data?.type || typeof data));
+      handleFileData(conn.peer, data);
+    });
     conn.on('close', () => { delete fileConnsRef.current[conn.peer]; });
     conn.on('error', (err) => log('fileConn error', err.type));
   };
@@ -303,7 +307,8 @@ export default function PeerFileShare() {
       ));
       reader.readAsArrayBuffer(file);
     };
-    if (conn.open) doSend(); else conn.on('open', doSend);
+    if (conn.open) setTimeout(doSend, 100);
+    else conn.on('open', () => setTimeout(doSend, 100));
   };
 
   const downloadFile = (transfer) => {
