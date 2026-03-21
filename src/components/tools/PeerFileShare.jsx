@@ -116,8 +116,10 @@ export default function PeerFileShare() {
   };
 
   const subscribeToTopic = (topic, myId) => {
-    // `since=0` tells ntfy to only deliver messages from NOW — no cached replay
-    const source = new EventSource(`https://ntfy.sh/${topic}/sse?since=0`);
+    // `since=<unix_seconds>` = only receive messages published after this moment.
+    // since=0 means "from epoch" (entire history!) — must use current time instead.
+    const sinceTs = Math.floor(Date.now() / 1000);
+    const source = new EventSource(`https://ntfy.sh/${topic}/sse?since=${sinceTs}`);
     ntfySourceRef.current = source;
 
     source.onmessage = (event) => {
