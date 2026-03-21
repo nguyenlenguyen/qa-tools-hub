@@ -508,15 +508,17 @@ export default function PeerFileShare() {
         ) : (
           <>
             <p className="text-sm font-medium text-gray-900 truncate">{t.name}</p>
-            <div className="flex items-center gap-2 mt-1">
-              <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
-                <div
-                  className={`h-full transition-all duration-300 ${t.status === 'complete' ? 'bg-emerald-500' : t.status === 'error' ? 'bg-red-400' : 'bg-blue-500'}`}
-                  style={{ width: `${t.progress}%` }}
-                />
+            {t.status !== 'complete' && (
+              <div className="flex items-center gap-2 mt-1">
+                <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-300 ${t.status === 'error' ? 'bg-red-400' : 'bg-blue-500'}`}
+                    style={{ width: `${t.progress}%` }}
+                  />
+                </div>
+                <span className="text-[10px] text-gray-400 w-7 text-right">{t.progress}%</span>
               </div>
-              <span className="text-[10px] text-gray-400 w-7 text-right">{t.progress}%</span>
-            </div>
+            )}
           </>
         )}
       </div>
