@@ -1,41 +1,24 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Share2, Smartphone, Laptop, FileUp, Download,
-  CheckCircle, XCircle, Loader2, Info, Users, ArrowRightLeft
+  CheckCircle, XCircle, Loader2, Info, Users, ArrowRightLeft, Terminal
 } from 'lucide-react';
 
 const ROOM_PREFIX = 'qafs';
-
 const DEVICE_NAMES = [
   'Swift Fox', 'Bold Eagle', 'Cool Penguin', 'Lazy Panda', 'Happy Dolphin',
   'Lunar Wolf', 'Zen Tiger', 'Neon Cat', 'Cosmic Owl', 'Desert Camel'
 ];
 
-/**
- * Architecture:
- *
- * Every device gets a RANDOM PeerJS ID (no collision risk).
- * Separately, one device "owns" a well-known ANCHOR ID = qafs-<ipHash>
- * The anchor peer only accepts signaling connections — it never changes.
- *
- * Flow:
- * 1. All devices register with a random ID first (always succeeds).
- * 2. Then try to ALSO register an anchor peer with the well-known ID.
- *    - Success  → you are HOST. Accept guest hello messages, broadcast member list.
- *    - "unavailable-id" error → you are GUEST. Connect to anchor ID, send hello.
- * 3. Host keeps member list and broadcasts to all guests on join/leave.
- * 4. If host page closes, anchor peer is destroyed.
- *    Guests detect host conn close → race to become new host (try anchor ID again).
- * 5. File transfers are always direct between random peer IDs (not through anchor).
- */
 export default function PeerFileShare() {
   const [publicIp, setPublicIp] = useState('');
   const [myPeerId, setMyPeerId] = useState('');
-  const [isHost, setIsHost] = useState(false);
+  const [isHost, setIsHost] = useState(null); // null=unknown, true, false
   const [peers, setPeers] = useState([]);
   const [transfers, setTransfers] = useState([]);
   const [status, setStatus] = useState('initializing');
   const [error, setError] = useState(null);
+  const [logs, setLogs] = useState([]);
 
   const [deviceName] = useState(() => {
     const saved = localStorage.getItem('qa-tools-peer-name');
@@ -47,17 +30,23 @@ export default function PeerFileShare() {
     return name;
   });
 
-  // ── Stable refs ────────────────────────────────────────────────────────────
-  const mainPeerRef = useRef(null); // our random-ID peer (always exists)
-  const anchorPeerRef = useRef(null); // well-known anchor peer (host only)
+  const mainPeerRef = useRef(null);
+  const anchorPeerRef = useRef(null);
   const myPeerIdRef = useRef('');
   const deviceNameRef = useRef(deviceName);
   const anchorIdRef = useRef('');
   const isHostRef = useRef(false);
-  const guestsRef = useRef({});   // host: { peerId → { id,name,type,conn } }
-  const hostConnRef = useRef(null); // guest: signaling conn to host anchor
-  const fileConnsRef = useRef({});   // all: direct file-transfer connections
+  const guestsRef = useRef({});
+  const hostConnRef = useRef(null);
+  const fileConnsRef = useRef({});
   const destroyedRef = useRef(false);
+
+  const log = (msg, data) => {
+    const ts = new Date().toISOString().slice(11, 23);
+    const line = data !== undefined ? `[${ts}] ${msg}: ${JSON.stringify(data)}` : `[${ts}] ${msg}`;
+    console.log(line);
+    setLogs(prev => [...prev.slice(-49), line]);
+  };
 
   useEffect(() => {
     init();
@@ -68,8 +57,6 @@ export default function PeerFileShare() {
     };
   }, []); // eslint-disable-line
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
-
   const myMeta = () => ({
     id: myPeerIdRef.current,
     name: deviceNameRef.current,
@@ -77,106 +64,113 @@ export default function PeerFileShare() {
   });
 
   const broadcastMembers = () => {
-    if (!isHostRef.current) return;
     const members = [
       myMeta(),
       ...Object.values(guestsRef.current).map(({ id, name, type }) => ({ id, name, type })),
     ];
+    log('HOST broadcast members', members.map(m => m.name));
     Object.values(guestsRef.current).forEach(({ conn }) => {
       try { if (conn?.open) conn.send({ type: 'member-list', members }); } catch (_) { }
     });
     setPeers(members.filter(m => m.id !== myPeerIdRef.current));
   };
 
-  // ── Step 1: register random peer ID ───────────────────────────────────────
-
   const init = async () => {
     try {
       setStatus('initializing');
       destroyedRef.current = false;
+      log('init() start');
 
       const res = await fetch('https://api.ipify.org?format=json');
       const { ip } = await res.json();
       setPublicIp(ip);
+      log('got IP', ip);
 
       const ipHash = btoa(ip).replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toLowerCase();
       const anchorId = `${ROOM_PREFIX}-${ipHash}`;
       anchorIdRef.current = anchorId;
+      log('anchorId', anchorId);
 
       if (!window.Peer) throw new Error('PeerJS not loaded.');
 
-      // Always register with a random ID first — guaranteed no collision
+      // Step 1: register with a random ID
       const randomId = `${ROOM_PREFIX}-m-${Math.random().toString(36).slice(2, 10)}`;
+      log('registering mainPeer', randomId);
       const mainPeer = new window.Peer(randomId, { secure: true });
       mainPeerRef.current = mainPeer;
 
       mainPeer.on('open', (id) => {
         if (destroyedRef.current) return;
+        log('mainPeer open', id);
         myPeerIdRef.current = id;
         setMyPeerId(id);
-
-        // Step 2: try to claim the anchor ID
         tryClaimAnchor(anchorId);
       });
 
-      // Accept incoming file-transfer connections on our random ID
       mainPeer.on('connection', (conn) => {
+        log('mainPeer incoming file-conn from', conn.peer);
         setupFileConn(conn);
       });
 
       mainPeer.on('error', (err) => {
         if (destroyedRef.current) return;
-        console.error('Main peer error:', err);
-        setError('Connection error: ' + err.type);
+        log('mainPeer ERROR', err.type);
+        setError('mainPeer error: ' + err.type);
         setStatus('error');
       });
 
     } catch (err) {
       if (destroyedRef.current) return;
+      log('init ERROR', err.message);
       setError(err.message);
       setStatus('error');
     }
   };
 
-  // ── Step 2a: try to become host by claiming anchor ID ─────────────────────
-
   const tryClaimAnchor = (anchorId) => {
     if (destroyedRef.current) return;
+    log('tryClaimAnchor', anchorId);
+
+    // Destroy any previous anchor peer first
+    if (anchorPeerRef.current) {
+      anchorPeerRef.current.destroy();
+      anchorPeerRef.current = null;
+    }
 
     const anchorPeer = new window.Peer(anchorId, { secure: true });
     anchorPeerRef.current = anchorPeer;
 
-    anchorPeer.on('open', () => {
+    anchorPeer.on('open', (id) => {
       if (destroyedRef.current) { anchorPeer.destroy(); return; }
-      // We own the anchor → HOST
+      log('anchorPeer open → I am HOST', id);
       isHostRef.current = true;
       setIsHost(true);
       setStatus('ready');
 
-      // Accept guest signaling connections on the anchor peer
       anchorPeer.on('connection', (conn) => {
+        log('HOST got guest signaling conn from', conn.peer);
         handleGuestSignaling(conn);
       });
     });
 
     anchorPeer.on('error', (err) => {
       if (destroyedRef.current) return;
+      log('anchorPeer ERROR', err.type);
       if (err.type === 'unavailable-id') {
-        // Anchor taken → become guest
+        log('anchor taken → becoming GUEST');
         anchorPeerRef.current = null;
         becomeGuest(anchorId);
       } else {
-        console.error('Anchor peer error:', err);
-        // Non-fatal: still usable, just can't be host
+        log('anchor non-fatal error, becoming GUEST anyway');
+        anchorPeerRef.current = null;
         becomeGuest(anchorId);
       }
     });
   };
 
-  // ── Step 2b: become guest, connect to anchor ───────────────────────────────
-
   const becomeGuest = (anchorId) => {
     if (destroyedRef.current) return;
+    log('becomeGuest, connecting to anchor', anchorId);
     isHostRef.current = false;
     setIsHost(false);
     setStatus('ready');
@@ -186,74 +180,56 @@ export default function PeerFileShare() {
 
     conn.on('open', () => {
       if (destroyedRef.current) return;
-      // Send our hello immediately
+      log('GUEST connected to host, sending hello');
       conn.send({ type: 'hello', ...myMeta() });
     });
 
     conn.on('data', (data) => {
       if (!data || typeof data !== 'object') return;
       if (data.type === 'member-list') {
+        log('GUEST received member-list', data.members?.map(m => m.name));
         setPeers((data.members || []).filter(m => m.id !== myPeerIdRef.current));
       }
     });
 
     conn.on('close', () => {
       if (destroyedRef.current) return;
-      // Host left — wait a beat then try to claim anchor ourselves
+      log('GUEST: host conn closed, racing to claim anchor');
       hostConnRef.current = null;
       setPeers([]);
       setStatus('initializing');
       setTimeout(() => {
         if (!destroyedRef.current) tryClaimAnchor(anchorIdRef.current);
-      }, 500 + Math.random() * 1000); // random backoff to avoid race
+      }, 500 + Math.random() * 1000);
     });
 
     conn.on('error', (err) => {
       if (destroyedRef.current) return;
-      console.warn('Host conn error:', err);
-      // Try reconnecting after a moment
-      setTimeout(() => {
-        if (!destroyedRef.current && !hostConnRef.current?.open) {
-          becomeGuest(anchorId);
-        }
-      }, 2000);
+      log('GUEST hostConn error', err.type);
     });
   };
 
-  // ── Host: handle an incoming guest signaling connection ────────────────────
-
   const handleGuestSignaling = (conn) => {
-    conn.on('open', () => {
-      // Nothing yet — wait for hello
-    });
-
     conn.on('data', (data) => {
       if (!data || typeof data !== 'object') return;
-
       if (data.type === 'hello') {
-        guestsRef.current[data.id] = {
-          id: data.id,
-          name: data.name,
-          type: data.type,
-          conn,
-        };
+        log('HOST received hello from', data.name);
+        guestsRef.current[data.id] = { id: data.id, name: data.name, type: data.type, conn };
         broadcastMembers();
       }
     });
 
     conn.on('close', () => {
-      // Find and remove this guest by connection reference
       const entry = Object.values(guestsRef.current).find(g => g.conn === conn);
       if (entry) {
+        log('HOST: guest left', entry.name);
         delete guestsRef.current[entry.id];
         broadcastMembers();
       }
     });
 
-    conn.on('error', (err) => console.warn('Guest signaling error:', err));
+    conn.on('error', (err) => log('HOST guestSignaling error', err.type));
   };
-
-  // ── File transfer ──────────────────────────────────────────────────────────
 
   const getOrOpenFileConn = (targetId) => {
     const existing = fileConnsRef.current[targetId];
@@ -267,7 +243,7 @@ export default function PeerFileShare() {
     fileConnsRef.current[conn.peer] = conn;
     conn.on('data', (data) => handleFileData(conn.peer, data));
     conn.on('close', () => { delete fileConnsRef.current[conn.peer]; });
-    conn.on('error', (err) => console.warn('File conn error:', err));
+    conn.on('error', (err) => log('fileConn error', err.type));
   };
 
   const handleFileData = (fromId, data) => {
@@ -283,8 +259,7 @@ export default function PeerFileShare() {
         const updated = [...prev];
         const idx = updated.findIndex(t => t.from === fromId && t.status === 'receiving');
         if (idx !== -1) {
-          const typed = updated[idx].mimeType
-            ? new Blob([blob], { type: updated[idx].mimeType }) : blob;
+          const typed = updated[idx].mimeType ? new Blob([blob], { type: updated[idx].mimeType }) : blob;
           updated[idx] = { ...updated[idx], status: 'complete', progress: 100, file: typed };
         }
         return updated;
@@ -299,20 +274,15 @@ export default function PeerFileShare() {
       id: transferId, role: 'send', name: file.name,
       size: file.size, progress: 0, status: 'sending', to: targetId,
     }, ...prev]);
-
     const conn = getOrOpenFileConn(targetId);
     const doSend = () => {
       conn.send({ type: 'file-meta', transferId, name: file.name, size: file.size, mimeType: file.type });
       const reader = new FileReader();
       reader.onload = (e) => {
         conn.send(e.target.result);
-        setTransfers(prev => prev.map(t =>
-          t.id === transferId ? { ...t, status: 'complete', progress: 100 } : t
-        ));
+        setTransfers(prev => prev.map(t => t.id === transferId ? { ...t, status: 'complete', progress: 100 } : t));
       };
-      reader.onerror = () => setTransfers(prev => prev.map(t =>
-        t.id === transferId ? { ...t, status: 'error' } : t
-      ));
+      reader.onerror = () => setTransfers(prev => prev.map(t => t.id === transferId ? { ...t, status: 'error' } : t));
       reader.readAsArrayBuffer(file);
     };
     if (conn.open) doSend(); else conn.on('open', doSend);
@@ -320,15 +290,11 @@ export default function PeerFileShare() {
 
   const downloadFile = (transfer) => {
     const url = URL.createObjectURL(transfer.file);
-    const a = document.createElement('a');
-    a.href = url; a.download = transfer.name; a.click();
+    const a = document.createElement('a'); a.href = url; a.download = transfer.name; a.click();
     URL.revokeObjectURL(url);
   };
 
-  const getDeviceIcon = (type) =>
-    type === 'mobile' ? <Smartphone size={32} /> : <Laptop size={32} />;
-
-  // ── Error screen ──────────────────────────────────────────────────────────
+  const getDeviceIcon = (type) => type === 'mobile' ? <Smartphone size={32} /> : <Laptop size={32} />;
 
   if (status === 'error') {
     return (
@@ -343,8 +309,6 @@ export default function PeerFileShare() {
       </div>
     );
   }
-
-  // ── Main UI ───────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-6">
@@ -364,7 +328,13 @@ export default function PeerFileShare() {
             </div>
             <div className="flex justify-between text-xs">
               <span className="text-gray-400">Role:</span>
-              <span className="font-medium text-gray-600">{isHost ? '⭐ Host' : 'Guest'}</span>
+              <span className="font-medium text-gray-600">
+                {isHost === null ? '...' : isHost ? '⭐ Host' : 'Guest'}
+              </span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-400">Peer ID:</span>
+              <span className="font-mono text-gray-500 text-[10px]">{myPeerId.slice(-12) || '...'}</span>
             </div>
             <div className="flex justify-between text-xs">
               <span className="text-gray-400">Status:</span>
@@ -381,13 +351,26 @@ export default function PeerFileShare() {
               <Info size={18} className="text-blue-400" /> How it works
             </h3>
             <p className="text-sm text-gray-400 leading-relaxed">
-              The first device on your network becomes the <strong>Host</strong>.
-              Others join automatically. Files transfer <strong>directly</strong> P2P — never through a server.
+              The first device becomes the <strong>Host</strong>. Others join as guests.
+              Files transfer <strong>directly</strong> P2P.
             </p>
           </div>
-          <div className="absolute top-[-20%] right-[-10%] opacity-10">
-            <ArrowRightLeft size={160} />
-          </div>
+          <div className="absolute top-[-20%] right-[-10%] opacity-10"><ArrowRightLeft size={160} /></div>
+        </div>
+      </div>
+
+      {/* Debug Log Panel */}
+      <div className="bg-gray-950 rounded-2xl overflow-hidden">
+        <div className="px-4 py-2 border-b border-gray-800 flex items-center gap-2">
+          <Terminal size={14} className="text-green-400" />
+          <span className="text-xs font-mono text-green-400">Debug Log</span>
+          <button onClick={() => setLogs([])} className="ml-auto text-xs text-gray-500 hover:text-gray-300">clear</button>
+        </div>
+        <div className="p-4 h-48 overflow-y-auto font-mono text-xs text-green-300 space-y-0.5">
+          {logs.length === 0
+            ? <div className="text-gray-600">Waiting for events...</div>
+            : logs.map((l, i) => <div key={i}>{l}</div>)
+          }
         </div>
       </div>
 
@@ -397,9 +380,7 @@ export default function PeerFileShare() {
           <h3 className="font-bold text-gray-900 flex items-center gap-2">
             <Users size={18} className="text-gray-400" />
             Nearby Devices
-            <span className="ml-2 px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full">
-              {peers.length}
-            </span>
+            <span className="ml-2 px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full">{peers.length}</span>
           </h3>
           {status === 'initializing' && <Loader2 size={18} className="animate-spin text-blue-500" />}
         </div>
@@ -426,8 +407,7 @@ export default function PeerFileShare() {
                     </div>
                   </div>
                   <label className="block">
-                    <input type="file" className="hidden"
-                      onChange={(e) => sendFile(peer.id, e.target.files[0])} />
+                    <input type="file" className="hidden" onChange={(e) => sendFile(peer.id, e.target.files[0])} />
                     <div className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-600 cursor-pointer hover:bg-blue-500 hover:text-white hover:border-blue-500 transition-all shadow-sm">
                       <FileUp size={16} /> Send File
                     </div>
