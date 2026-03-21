@@ -64,13 +64,13 @@ export default function PeerFileShare() {
   const myMeta = () => ({
     id: myPeerIdRef.current,
     name: deviceNameRef.current,
-    type: /Android|iPhone|iPad/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+    deviceType: /Android|iPhone|iPad/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
   });
 
   const broadcastMembers = () => {
     const members = [
-      myMeta(),
-      ...Object.values(guestsRef.current).map(({ id, name, type }) => ({ id, name, type })),
+      { ...myMeta(), type: myMeta().deviceType },
+      ...Object.values(guestsRef.current).map(({ id, name, deviceType }) => ({ id, name, type: deviceType })),
     ];
     log('HOST broadcast members', members.map(m => m.name));
     Object.values(guestsRef.current).forEach(({ conn }) => {
@@ -167,7 +167,9 @@ export default function PeerFileShare() {
 
     conn.on('open', () => {
       log('GUEST connected to host, sending hello');
-      conn.send({ type: 'hello', ...myMeta() });
+      // FIX: spread myMeta() first, then set type='hello' last so it wins
+      const meta = myMeta();
+      conn.send({ ...meta, type: 'hello' });
     });
 
     conn.on('data', (data) => {
@@ -205,7 +207,7 @@ export default function PeerFileShare() {
       if (data.type === 'hello') {
         log('HOST received hello from', data.name);
         guestsRef.current[data.id] = {
-          id: data.id, name: data.name, type: data.type, conn,
+          id: data.id, name: data.name, deviceType: data.deviceType, conn,
         };
         broadcastMembers();
       }
