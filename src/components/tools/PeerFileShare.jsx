@@ -256,6 +256,7 @@ export default function PeerFileShare() {
   };
 
   const handleFileData = (fromId, data) => {
+    log('handleFileData from', fromId + ' type=' + (data?.type || typeof data) + ' isAB=' + (data instanceof ArrayBuffer) + ' isBlob=' + (data instanceof Blob));
     if (data && typeof data === 'object' && !(data instanceof ArrayBuffer) && !(data instanceof Blob) && data.type === 'file-meta') {
       setTransfers(prev => [{
         id: data.transferId, role: 'receive', name: data.name,
@@ -263,10 +264,12 @@ export default function PeerFileShare() {
         progress: 0, status: 'receiving', from: fromId,
       }, ...prev]);
     } else if (data instanceof ArrayBuffer || data instanceof Blob) {
+      log('handleFileData: got binary', 'size=' + (data.byteLength ?? data.size));
       const blob = data instanceof ArrayBuffer ? new Blob([data]) : data;
       setTransfers(prev => {
         const updated = [...prev];
         const idx = updated.findIndex(t => t.from === fromId && t.status === 'receiving');
+        log('handleFileData: match idx', idx + ' fromId=' + fromId);
         if (idx !== -1) {
           const typed = updated[idx].mimeType
             ? new Blob([blob], { type: updated[idx].mimeType }) : blob;
