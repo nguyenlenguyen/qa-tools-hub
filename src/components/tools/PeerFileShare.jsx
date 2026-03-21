@@ -147,8 +147,7 @@ export default function PeerFileShare() {
 
   const [deviceName, setDeviceName] = useState(() => {
     const saved = localStorage.getItem('qa-tools-peer-name');
-    const isAnimal = DEVICE_NAMES.some(n => saved && saved.startsWith(n));
-    if (saved && isAnimal) return saved;
+    if (saved) return saved;
     const name = DEVICE_NAMES[Math.floor(Math.random() * DEVICE_NAMES.length)]
       + ' ' + Math.floor(Math.random() * 100);
     localStorage.setItem('qa-tools-peer-name', name);
