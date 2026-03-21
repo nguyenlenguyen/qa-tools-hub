@@ -135,7 +135,8 @@ function parseMessage(arrayBuffer) {
 
 export default function PeerFileShare() {
   const [publicIp, setPublicIp] = useState('');
-  const [msgInputs, setMsgInputs] = useState({}); // { peerId: text }
+  const [myPeerId, setMyPeerId] = useState('');
+  const [msgInputs, setMsgInputs] = useState({});
   const [isHost, setIsHost] = useState(null);
   const [peers, setPeers] = useState([]);
   const [transfers, setTransfers] = useState([]);
