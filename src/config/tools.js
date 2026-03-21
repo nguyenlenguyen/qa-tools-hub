@@ -1,5 +1,5 @@
 import { lazy } from 'react';
-import { AlignLeft, Clock, FileJson, Film, GitCompare, Lock, Palette, Type } from 'lucide-react';
+import { AlignLeft, Clock, FileJson, Film, GitCompare, Lock, Palette, Share2, Type } from 'lucide-react';
 
 export const TOOLS_CONFIG = [
   {
@@ -73,5 +73,14 @@ export const TOOLS_CONFIG = [
     component: lazy(() => import('../components/tools/TextDiffChecker.jsx')),
     color: 'text-rose-500',
     bgColor: 'bg-rose-50'
+  },
+  {
+    id: 'peer-share',
+    name: 'Peer File Share',
+    description: 'Send files directly between devices on the same network (P2P).',
+    icon: Share2,
+    component: lazy(() => import('../components/tools/PeerFileShare.jsx')),
+    color: 'text-cyan-500',
+    bgColor: 'bg-cyan-50'
   }
 ];
