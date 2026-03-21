@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Share2, Smartphone, Laptop, FileUp, Download,
-  CheckCircle, XCircle, Loader2, Users, Terminal
+  CheckCircle, XCircle, Loader2, Users
 } from 'lucide-react';
 
 const ROOM_PREFIX = 'qafs';
@@ -127,7 +127,6 @@ export default function PeerFileShare() {
   const [transfers, setTransfers] = useState([]);
   const [status, setStatus] = useState('initializing');
   const [error, setError] = useState(null);
-  const [logs, setLogs] = useState([]);
 
   const [deviceName] = useState(() => {
     const saved = localStorage.getItem('qa-tools-peer-name');
@@ -155,14 +154,6 @@ export default function PeerFileShare() {
   const initCalledRef = useRef(false);
 
   // ── Logging ────────────────────────────────────────────────────────────────
-  const log = (msg, data) => {
-    const ts = new Date().toISOString().slice(11, 23);
-    const line = data !== undefined
-      ? `[${ts}] ${msg}: ${JSON.stringify(data)}`
-      : `[${ts}] ${msg}`;
-    console.log(line);
-    setLogs(prev => [...prev.slice(-49), line]);
-  };
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -187,7 +178,6 @@ export default function PeerFileShare() {
       { ...myMeta(), type: myMeta().deviceType },
       ...Object.values(guestsRef.current).map(({ id, name, deviceType }) => ({ id, name, type: deviceType })),
     ];
-    log('HOST broadcast', members.map(m => m.name));
     Object.values(guestsRef.current).forEach(({ conn }) => {
       try { if (conn?.open) conn.send({ type: 'member-list', members }); } catch (_) { }
     });
@@ -198,7 +188,6 @@ export default function PeerFileShare() {
   const init = async () => {
     try {
       setStatus('initializing');
-      log('init()');
 
       const res = await fetch('https://api.ipify.org?format=json');
       const { ip } = await res.json();
@@ -207,7 +196,6 @@ export default function PeerFileShare() {
       const ipHash = btoa(ip).replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toLowerCase();
       const anchorId = `${ROOM_PREFIX}-${ipHash}`;
       anchorIdRef.current = anchorId;
-      log('anchorId', anchorId);
 
       if (!window.Peer) throw new Error('PeerJS not loaded.');
 
@@ -216,7 +204,6 @@ export default function PeerFileShare() {
       mainPeerRef.current = mainPeer;
 
       mainPeer.on('open', (id) => {
-        log('mainPeer open', id);
         myPeerIdRef.current = id;
         setMyPeerId(id);
         tryClaimAnchor(anchorId);
@@ -224,19 +211,16 @@ export default function PeerFileShare() {
 
       // Incoming file-transfer connection (binary)
       mainPeer.on('connection', (conn) => {
-        log('incoming conn label=' + conn.label + ' from', conn.peer);
         if (conn.label === 'ft') setupFileConn(conn);
         // Signaling conns from other guests go through anchorPeer, not here
       });
 
       mainPeer.on('error', (err) => {
-        log('mainPeer error', err.type);
         setError('mainPeer: ' + err.type);
         setStatus('error');
       });
 
     } catch (err) {
-      log('init error', err.message);
       setError(err.message);
       setStatus('error');
     }
@@ -244,32 +228,27 @@ export default function PeerFileShare() {
 
   // ── Host / anchor ──────────────────────────────────────────────────────────
   const tryClaimAnchor = (anchorId) => {
-    log('tryClaimAnchor', anchorId);
     if (anchorPeerRef.current) { anchorPeerRef.current.destroy(); anchorPeerRef.current = null; }
 
     const ap = new window.Peer(anchorId, { secure: true });
     anchorPeerRef.current = ap;
 
     ap.on('open', () => {
-      log('HOST');
       isHostRef.current = true;
       setIsHost(true);
       setStatus('ready');
       ap.on('connection', (conn) => {
-        log('HOST got signaling conn from', conn.peer);
         handleGuestSignaling(conn);
       });
     });
 
     ap.on('error', (err) => {
-      log('anchorPeer error', err.type);
       anchorPeerRef.current = null;
       becomeGuest(anchorId);
     });
   };
 
   const becomeGuest = (anchorId) => {
-    log('GUEST → connecting to', anchorId);
     isHostRef.current = false;
     setIsHost(false);
     setStatus('ready');
@@ -278,27 +257,23 @@ export default function PeerFileShare() {
     hostConnRef.current = conn;
 
     conn.on('open', () => {
-      log('GUEST connected, sending hello');
       const meta = myMeta();
       conn.send({ ...meta, type: 'hello' });
     });
 
     conn.on('data', (data) => {
       if (data?.type === 'member-list') {
-        log('GUEST got member-list', data.members?.map(m => m.name));
         setPeers((data.members || []).filter(m => m.id !== myPeerIdRef.current));
       }
     });
 
     conn.on('close', () => {
-      log('GUEST: host closed, racing for anchor');
       hostConnRef.current = null;
       setPeers([]);
       setStatus('initializing');
       setTimeout(() => tryClaimAnchor(anchorIdRef.current), 500 + Math.random() * 1000);
     });
 
-    conn.on('error', (err) => log('hostConn error', err.type));
   };
 
   const handleGuestSignaling = (conn) => {
@@ -306,7 +281,6 @@ export default function PeerFileShare() {
     const process = (data) => {
       if (!data || typeof data !== 'object') return;
       if (data.type === 'hello') {
-        log('HOST got hello from', data.name);
         guestsRef.current[data.id] = { id: data.id, name: data.name, deviceType: data.deviceType, conn };
         broadcastMembers();
       }
@@ -315,9 +289,8 @@ export default function PeerFileShare() {
     conn.on('data', (d) => ready ? process(d) : pending.push(d));
     conn.on('close', () => {
       const e = Object.values(guestsRef.current).find(g => g.conn === conn);
-      if (e) { log('HOST: guest left', e.name); delete guestsRef.current[e.id]; broadcastMembers(); }
+      if (e) { delete guestsRef.current[e.id]; broadcastMembers(); }
     });
-    conn.on('error', (err) => log('guestSig error', err.type));
   };
 
   // ── File transfer ──────────────────────────────────────────────────────────
@@ -336,7 +309,6 @@ export default function PeerFileShare() {
 
   const setupFileConn = (conn) => {
     fileConnsRef.current[conn.peer] = conn;
-    conn.on('open', () => log('fileConn open', conn.peer));
     conn.on('data', (raw) => {
       // Normalize whatever PeerJS delivers into an ArrayBuffer
       let ab;
@@ -351,14 +323,12 @@ export default function PeerFileShare() {
         for (let i = 0; i < len; i++) u8[i] = raw[i];
         ab = u8.buffer;
       } else {
-        log('fileConn unhandled data type', typeof raw);
         return;
       }
       const msg = parseMessage(ab);
       if (!msg) return;
 
       if (msg.msgType === MSG_FILE_START) {
-        log('FILE_START', msg.name + ' chunks=' + msg.numChunks);
         incomingRef.current[msg.transferId] = {
           name: msg.name, mime: msg.mime,
           numChunks: msg.numChunks,
@@ -381,7 +351,6 @@ export default function PeerFileShare() {
       } else if (msg.msgType === MSG_FILE_END) {
         const entry = incomingRef.current[msg.transferId];
         if (!entry) return;
-        log('FILE_END, reassembling', msg.transferId);
 
         // Sort chunks by index and concatenate
         const sorted = [...entry.chunks.entries()]
@@ -404,7 +373,6 @@ export default function PeerFileShare() {
       }
     });
     conn.on('close', () => { delete fileConnsRef.current[conn.peer]; });
-    conn.on('error', (err) => log('fileConn error', err.type));
   };
 
   const sendFile = (targetId, file) => {
@@ -422,7 +390,6 @@ export default function PeerFileShare() {
       reader.onload = (e) => {
         const buffer = e.target.result;
         const numChunks = Math.ceil(buffer.byteLength / CHUNK_SIZE);
-        log('sending', file.name + ' chunks=' + numChunks);
 
         // 1. Send FILE_START
         conn.send(buildFileStart(transferId, numChunks, file.name, file.type));
@@ -527,84 +494,65 @@ export default function PeerFileShare() {
 
   return (
     <div className="space-y-4">
-      {/* Top row: Your Device + Nearby Devices side by side */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
-        {/* Your Device — compact with title */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 bg-blue-50 text-blue-600 rounded-xl shrink-0">
-              <Share2 size={18} />
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Your Device</p>
-              <p className="font-bold text-gray-900 text-sm leading-tight">{deviceName}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-gray-400 font-mono">{publicIp || 'Detecting...'}</span>
-            <span className="text-gray-300">·</span>
-            <span className={`text-[11px] font-medium ${status === 'ready' ? 'text-emerald-500' : 'text-amber-500'}`}>
-              {status === 'ready' ? '● Online' : '● Connecting...'}
-            </span>
-            {status === 'initializing' && <Loader2 size={12} className="animate-spin text-blue-400 ml-1" />}
-          </div>
+      {/* Your Device — slim status bar, full width */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-4 py-3 flex items-center gap-3">
+        <div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg shrink-0">
+          <Share2 size={15} />
         </div>
-
-        {/* Nearby Devices */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-50 flex items-center gap-2">
-            <Users size={15} className="text-gray-400" />
-            <span className="font-semibold text-gray-900 text-sm">Nearby Devices</span>
-            <span className="ml-1 px-1.5 py-0.5 bg-gray-100 text-gray-500 text-[10px] rounded-full">{peers.length}</span>
-          </div>
-          <div className="p-3">
-            {peers.length === 0 ? (
-              <div className="flex items-center gap-3 py-3 px-1">
-                <div className="w-8 h-8 bg-gray-50 rounded-full flex items-center justify-center animate-pulse shrink-0">
-                  <Share2 className="text-gray-200" size={14} />
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500">Looking for devices...</p>
-                  <p className="text-[11px] text-gray-400">Open this page on another device on the same Wi-Fi.</p>
-                </div>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {peers.map(peer => (
-                  <label key={peer.id} className="group cursor-pointer">
-                    <input type="file" className="hidden" onChange={(e) => sendFile(peer.id, e.target.files[0])} />
-                    <div className="flex flex-col items-center gap-2 p-3 bg-gray-50 rounded-xl border border-transparent group-hover:border-blue-200 group-hover:bg-blue-50 transition-all duration-200">
-                      <div className="p-2 bg-white rounded-lg shadow-sm text-gray-400 group-hover:text-blue-500 transition-colors">
-                        {peer.type === 'mobile' ? <Smartphone size={20} /> : <Laptop size={20} />}
-                      </div>
-                      <div className="text-center min-w-0 w-full">
-                        <p className="text-xs font-semibold text-gray-900 truncate">{peer.name}</p>
-                        <p className="text-[9px] font-mono text-gray-400">{peer.id.slice(-6)}</p>
-                      </div>
-                      <div className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-lg text-[11px] font-medium text-gray-600 group-hover:bg-blue-500 group-hover:text-white group-hover:border-blue-500 transition-all w-full justify-center">
-                        <FileUp size={11} /> Send File
-                      </div>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
+        <div className="flex items-baseline gap-1.5 min-w-0">
+          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider shrink-0">Your Device</span>
+          <span className="font-semibold text-gray-900 text-sm truncate">{deviceName}</span>
+        </div>
+        <div className="ml-auto flex items-center gap-3 shrink-0">
+          <span className="text-[11px] text-gray-400 font-mono hidden sm:inline">{publicIp || 'Detecting...'}</span>
+          <span className="hidden sm:inline text-gray-200">·</span>
+          <span className={`text-[11px] font-semibold ${status === 'ready' ? 'text-emerald-500' : 'text-amber-500'}`}>
+            {status === 'ready' ? '● Online' : '● Connecting...'}
+          </span>
+          {status === 'initializing' && <Loader2 size={12} className="animate-spin text-blue-400" />}
         </div>
       </div>
 
-      {/* Debug Log */}
-      <div className="bg-gray-950 rounded-2xl overflow-hidden">
-        <div className="px-4 py-2 border-b border-gray-800 flex items-center gap-2">
-          <Terminal size={13} className="text-green-400" />
-          <span className="text-xs font-mono text-green-400">Debug Log</span>
-          <button onClick={() => setLogs([])} className="ml-auto text-xs text-gray-500 hover:text-gray-300">clear</button>
+      {/* Nearby Devices — full width */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-50 flex items-center gap-2">
+          <Users size={15} className="text-gray-400" />
+          <span className="font-semibold text-gray-900 text-sm">Nearby Devices</span>
+          <span className="ml-1 px-1.5 py-0.5 bg-gray-100 text-gray-500 text-[10px] rounded-full">{peers.length}</span>
         </div>
-        <div className="p-3 h-36 overflow-y-auto font-mono text-xs text-green-300 space-y-0.5">
-          {logs.length === 0
-            ? <div className="text-gray-600">Waiting for events...</div>
-            : logs.map((l, i) => <div key={i}>{l}</div>)}
+        <div className="p-3">
+          {peers.length === 0 ? (
+            <div className="flex items-center gap-3 py-4 px-2">
+              <div className="w-8 h-8 bg-gray-50 rounded-full flex items-center justify-center animate-pulse shrink-0">
+                <Share2 className="text-gray-200" size={14} />
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Looking for devices...</p>
+                <p className="text-[11px] text-gray-400">Open this page on another device on the same Wi-Fi.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+              {peers.map(peer => (
+                <label key={peer.id} className="group cursor-pointer">
+                  <input type="file" className="hidden" onChange={(e) => sendFile(peer.id, e.target.files[0])} />
+                  <div className="flex flex-col items-center gap-2 p-3 bg-gray-50 rounded-xl border border-transparent group-hover:border-blue-200 group-hover:bg-blue-50 transition-all duration-200">
+                    <div className="p-2 bg-white rounded-lg shadow-sm text-gray-400 group-hover:text-blue-500 transition-colors">
+                      {peer.type === 'mobile' ? <Smartphone size={20} /> : <Laptop size={20} />}
+                    </div>
+                    <div className="text-center min-w-0 w-full">
+                      <p className="text-xs font-semibold text-gray-900 truncate">{peer.name}</p>
+                      <p className="text-[9px] font-mono text-gray-400">{peer.id.slice(-6)}</p>
+                    </div>
+                    <div className="flex items-center gap-1 px-2 py-1 bg-white border border-gray-200 rounded-lg text-[11px] font-medium text-gray-600 group-hover:bg-blue-500 group-hover:text-white group-hover:border-blue-500 transition-all w-full justify-center">
+                      <FileUp size={11} /> Send File
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
