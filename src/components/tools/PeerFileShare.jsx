@@ -556,23 +556,40 @@ export default function PeerFileShare() {
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
           <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider shrink-0">Your Device</span>
           {editingName ? (
-            <input
-              autoFocus
-              value={nameInput}
-              onChange={e => setNameInput(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && nameInput.trim()) {
-                  const newName = nameInput.trim();
-                  localStorage.setItem('qa-tools-peer-name', newName);
-                  deviceNameRef.current = newName;
-                  setDeviceName(newName);
-                  setEditingName(false);
-                }
-                if (e.key === 'Escape') setEditingName(false);
-              }}
-              onBlur={() => setEditingName(false)}
-              className="font-semibold text-gray-900 text-sm bg-transparent border-b border-blue-400 outline-none min-w-0 w-32"
-            />
+            <div className="flex items-center gap-1 flex-1 min-w-0">
+              <input
+                autoFocus
+                value={nameInput}
+                onChange={e => setNameInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && nameInput.trim()) {
+                    const newName = nameInput.trim();
+                    localStorage.setItem('qa-tools-peer-name', newName);
+                    deviceNameRef.current = newName;
+                    setDeviceName(newName);
+                    setEditingName(false);
+                  }
+                  if (e.key === 'Escape') setEditingName(false);
+                }}
+                onBlur={() => setEditingName(false)}
+                className="font-semibold text-gray-900 text-sm bg-transparent border-b border-blue-400 outline-none min-w-0 w-32"
+              />
+              <button
+                onMouseDown={e => {
+                  e.preventDefault();
+                  if (nameInput.trim()) {
+                    const newName = nameInput.trim();
+                    localStorage.setItem('qa-tools-peer-name', newName);
+                    deviceNameRef.current = newName;
+                    setDeviceName(newName);
+                    setEditingName(false);
+                  }
+                }}
+                className="sm:hidden text-[11px] font-medium text-white bg-blue-500 px-2 py-0.5 rounded-md shrink-0"
+              >
+                Save
+              </button>
+            </div>
           ) : (
             <button
               onClick={() => { setNameInput(deviceName); setEditingName(true); }}
