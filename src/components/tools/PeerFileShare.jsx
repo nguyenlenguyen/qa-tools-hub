@@ -243,8 +243,7 @@ export default function PeerFileShare() {
   const getOrOpenFileConn = (targetId) => {
     const existing = fileConnsRef.current[targetId];
     if (existing?.open) return existing;
-    // 'binary' serialization ensures ArrayBuffer arrives as ArrayBuffer, not plain object
-    const conn = mainPeerRef.current.connect(targetId, { reliable: true, serialization: 'binary' });
+    const conn = mainPeerRef.current.connect(targetId, { reliable: true, serialization: 'json' });
     setupFileConn(conn);
     return conn;
   };
@@ -257,39 +256,20 @@ export default function PeerFileShare() {
   };
 
   const handleFileData = (fromId, data) => {
-    // String = JSON metadata sent over binary connection
-    if (typeof data === 'string') {
-      try {
-        const parsed = JSON.parse(data);
-        if (parsed.type === 'file-meta') {
-          log('handleFileData: got file-meta', parsed.name);
-          setTransfers(prev => [{
-            id: parsed.transferId, role: 'receive', name: parsed.name,
-            size: parsed.size, mimeType: parsed.mimeType || '',
-            progress: 0, status: 'receiving', from: fromId,
-          }, ...prev]);
-        }
-      } catch (_) { }
-      return;
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'file-transfer') {
+      log('handleFileData: got file-transfer', data.name);
+      // Decode base64 → Blob
+      const binary = atob(data.data);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: data.mimeType || '' });
+      setTransfers(prev => [{
+        id: data.transferId, role: 'receive', name: data.name,
+        mimeType: data.mimeType, progress: 100, status: 'complete',
+        from: fromId, file: blob,
+      }, ...prev]);
     }
-    // ArrayBuffer = actual file binary
-    if (data instanceof ArrayBuffer) {
-      log('handleFileData: got ArrayBuffer', data.byteLength);
-      const blob = new Blob([data]);
-      setTransfers(prev => {
-        const updated = [...prev];
-        const idx = updated.findIndex(t => t.from === fromId && t.status === 'receiving');
-        log('handleFileData: match idx', idx);
-        if (idx !== -1) {
-          const typed = updated[idx].mimeType
-            ? new Blob([blob], { type: updated[idx].mimeType }) : blob;
-          updated[idx] = { ...updated[idx], status: 'complete', progress: 100, file: typed };
-        }
-        return updated;
-      });
-      return;
-    }
-    log('handleFileData: unhandled data type', typeof data);
   };
 
   const sendFile = (targetId, file) => {
@@ -301,14 +281,26 @@ export default function PeerFileShare() {
     }, ...prev]);
     const conn = getOrOpenFileConn(targetId);
     const doSend = () => {
-      // Send metadata as JSON string (binary conn doesn't support plain objects)
-      conn.send(JSON.stringify({ type: 'file-meta', transferId, name: file.name, size: file.size, mimeType: file.type }));
       const reader = new FileReader();
       reader.onload = (e) => {
-        conn.send(e.target.result);
-        setTransfers(prev => prev.map(t => t.id === transferId ? { ...t, status: 'complete', progress: 100 } : t));
+        // Encode as base64 so it travels safely as JSON — no binary serialization issues
+        const bytes = new Uint8Array(e.target.result);
+        let binary = '';
+        for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+        conn.send({
+          type: 'file-transfer',
+          transferId,
+          name: file.name,
+          mimeType: file.type,
+          data: btoa(binary),
+        });
+        setTransfers(prev => prev.map(t =>
+          t.id === transferId ? { ...t, status: 'complete', progress: 100 } : t
+        ));
       };
-      reader.onerror = () => setTransfers(prev => prev.map(t => t.id === transferId ? { ...t, status: 'error' } : t));
+      reader.onerror = () => setTransfers(prev => prev.map(t =>
+        t.id === transferId ? { ...t, status: 'error' } : t
+      ));
       reader.readAsArrayBuffer(file);
     };
     if (conn.open) doSend(); else conn.on('open', doSend);
