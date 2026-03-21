@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Share2, Smartphone, Laptop, FileUp, Download,
-  CheckCircle, XCircle, Loader2, Users, MessageSquare
+  CheckCircle, XCircle, Loader2, Users, MessageSquare, Pencil
 } from 'lucide-react';
 
 const ROOM_PREFIX = 'qafs';
@@ -135,6 +135,8 @@ function parseMessage(arrayBuffer) {
 
 export default function PeerFileShare() {
   const [publicIp, setPublicIp] = useState('');
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState('');
   const [myPeerId, setMyPeerId] = useState('');
   const [msgInputs, setMsgInputs] = useState({});
   const [isHost, setIsHost] = useState(null);
@@ -143,7 +145,7 @@ export default function PeerFileShare() {
   const [status, setStatus] = useState('initializing');
   const [error, setError] = useState(null);
 
-  const [deviceName] = useState(() => {
+  const [deviceName, setDeviceName] = useState(() => {
     const saved = localStorage.getItem('qa-tools-peer-name');
     const isAnimal = DEVICE_NAMES.some(n => saved && saved.startsWith(n));
     if (saved && isAnimal) return saved;
@@ -543,16 +545,42 @@ export default function PeerFileShare() {
   );
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pb-6">
 
       {/* Your Device — slim status bar, full width */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-4 py-3 flex items-center gap-3">
         <div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg shrink-0">
           <Share2 size={15} />
         </div>
-        <div className="flex items-baseline gap-1.5 min-w-0">
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
           <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider shrink-0">Your Device</span>
-          <span className="font-semibold text-gray-900 text-sm truncate">{deviceName}</span>
+          {editingName ? (
+            <input
+              autoFocus
+              value={nameInput}
+              onChange={e => setNameInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && nameInput.trim()) {
+                  const newName = nameInput.trim();
+                  localStorage.setItem('qa-tools-peer-name', newName);
+                  deviceNameRef.current = newName;
+                  setDeviceName(newName);
+                  setEditingName(false);
+                }
+                if (e.key === 'Escape') setEditingName(false);
+              }}
+              onBlur={() => setEditingName(false)}
+              className="font-semibold text-gray-900 text-sm bg-transparent border-b border-blue-400 outline-none min-w-0 w-32"
+            />
+          ) : (
+            <button
+              onClick={() => { setNameInput(deviceName); setEditingName(true); }}
+              className="flex items-center gap-1 group min-w-0"
+            >
+              <span className="font-semibold text-gray-900 text-sm truncate">{deviceName}</span>
+              <Pencil size={11} className="text-gray-300 group-hover:text-blue-400 transition-colors shrink-0" />
+            </button>
+          )}
         </div>
         <div className="ml-auto flex items-center gap-3 shrink-0">
           <span className="text-[11px] text-gray-400 font-mono hidden sm:inline">{publicIp || 'Detecting...'}</span>
@@ -629,7 +657,9 @@ export default function PeerFileShare() {
                           setMsgInputs(prev => ({ ...prev, [peer.id]: '' }));
                         }
                       }}
-                      className="px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-gray-500 hover:bg-violet-500 hover:text-white hover:border-violet-500 transition-all"
+                      onMouseEnter={e => { e.currentTarget.style.background = '#8b5cf6'; e.currentTarget.style.borderColor = '#8b5cf6'; e.currentTarget.style.color = 'white'; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'white'; e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.color = '#6b7280'; }}
+                      className="px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-gray-500 transition-all"
                     >
                       <MessageSquare size={11} />
                     </button>
