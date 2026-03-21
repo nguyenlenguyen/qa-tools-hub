@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Share2, Smartphone, Laptop, FileUp, Download,
-  CheckCircle, XCircle, Loader2, Users, MessageSquare, Pencil
+  CheckCircle, XCircle, Loader2, Users, MessageSquare, Pencil, Copy
 } from 'lucide-react';
 
 const ROOM_PREFIX = 'qafs';
@@ -139,6 +139,7 @@ export default function PeerFileShare() {
   const [nameInput, setNameInput] = useState('');
   const [myPeerId, setMyPeerId] = useState('');
   const [msgInputs, setMsgInputs] = useState({});
+  const [copiedId, setCopiedId] = useState(null);
   const [isHost, setIsHost] = useState(null);
   const [peers, setPeers] = useState([]);
   const [transfers, setTransfers] = useState([]);
@@ -522,7 +523,20 @@ export default function PeerFileShare() {
           </>
         )}
       </div>
-      <div className="shrink-0">
+      <div className="shrink-0 flex items-center gap-1">
+        {t.kind === 'message' && t.role === 'receive' && (
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(t.name);
+              setCopiedId(t.id);
+              setTimeout(() => setCopiedId(null), 2000);
+            }}
+            className="p-1 text-gray-300 hover:text-violet-500 transition-colors"
+            title="Copy message"
+          >
+            {copiedId === t.id ? <CheckCircle size={14} className="text-violet-500" /> : <Copy size={14} />}
+          </button>
+        )}
         {t.kind === 'message' || t.saved ? (
           <CheckCircle className="text-emerald-500" size={18} />
         ) : t.status === 'complete' ? (
@@ -637,7 +651,6 @@ export default function PeerFileShare() {
                   </div>
                   <div className="text-center min-w-0 w-full">
                     <p className="text-xs font-semibold text-gray-900 truncate">{peer.name}</p>
-                    <p className="text-[9px] font-mono text-gray-400">{peer.id.slice(-6)}</p>
                   </div>
                   <label className="w-full cursor-pointer"
                     onMouseEnter={e => {
