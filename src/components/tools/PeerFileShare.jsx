@@ -327,7 +327,7 @@ export default function PeerFileShare() {
     // label='ft', serialization='binary' → ArrayBuffer in / ArrayBuffer out
     const conn = mainPeerRef.current.connect(targetId, {
       reliable: true,
-      serialization: 'binary',
+      serialization: 'raw',
       label: 'ft',
     });
     setupFileConn(conn);
@@ -338,12 +338,23 @@ export default function PeerFileShare() {
     fileConnsRef.current[conn.peer] = conn;
     conn.on('open', () => log('fileConn open', conn.peer));
     conn.on('data', (raw) => {
-      // PeerJS binary mode delivers ArrayBuffer
-      if (!(raw instanceof ArrayBuffer)) {
-        log('fileConn unexpected data type', typeof raw);
+      // Normalize whatever PeerJS delivers into an ArrayBuffer
+      let ab;
+      if (raw instanceof ArrayBuffer) {
+        ab = raw;
+      } else if (ArrayBuffer.isView(raw)) {
+        ab = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+      } else if (raw && typeof raw === 'object') {
+        // PeerJS sometimes wraps binary as plain {0:byte, 1:byte, ...}
+        const len = Object.keys(raw).length;
+        const u8 = new Uint8Array(len);
+        for (let i = 0; i < len; i++) u8[i] = raw[i];
+        ab = u8.buffer;
+      } else {
+        log('fileConn unhandled data type', typeof raw);
         return;
       }
-      const msg = parseMessage(raw);
+      const msg = parseMessage(ab);
       if (!msg) return;
 
       if (msg.msgType === MSG_FILE_START) {
