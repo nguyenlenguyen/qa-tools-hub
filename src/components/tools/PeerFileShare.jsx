@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Share2, Smartphone, Laptop, FileUp, Download,
-  CheckCircle, XCircle, Loader2, Info, Users, ArrowRightLeft, Terminal
+  CheckCircle, XCircle, Loader2, Users, Terminal
 } from 'lucide-react';
 
 const ROOM_PREFIX = 'qafs';
@@ -486,149 +486,164 @@ export default function PeerFileShare() {
     );
   }
 
-  // ── Main UI ────────────────────────────────────────────────────────────────
+  // ── Main UI ──────────────────────────────────────────────────────────────────
+  const sent = transfers.filter(t => t.role === 'send');
+  const received = transfers.filter(t => t.role === 'receive');
+
+  const TransferRow = ({ t }) => (
+    <div className="flex items-center gap-3 px-4 py-3">
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-gray-900 truncate">{t.name}</p>
+        <div className="flex items-center gap-2 mt-1">
+          <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
+            <div
+              className={`h-full transition-all duration-300 ${t.status === 'complete' ? 'bg-emerald-500' : t.status === 'error' ? 'bg-red-400' : 'bg-blue-500'}`}
+              style={{ width: `${t.progress}%` }}
+            />
+          </div>
+          <span className="text-[10px] text-gray-400 w-7 text-right">{t.progress}%</span>
+        </div>
+      </div>
+      <div className="shrink-0">
+        {t.status === 'complete' ? (
+          t.role === 'receive' ? (
+            <button
+              onClick={() => downloadFile(t)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium transition-colors"
+            >
+              <Download size={13} /> Save
+            </button>
+          ) : (
+            <CheckCircle className="text-emerald-500" size={18} />
+          )
+        ) : t.status === 'error' ? (
+          <XCircle className="text-red-400" size={18} />
+        ) : (
+          <Loader2 className="text-blue-400 animate-spin" size={18} />
+        )}
+      </div>
+    </div>
+  );
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+      {/* Top row: Your Device + Nearby Devices side by side */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
-          <div className="flex items-center gap-4 mb-4">
-            <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><Share2 size={24} /></div>
+
+        {/* Your Device — compact with title */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="p-2 bg-blue-50 text-blue-600 rounded-xl shrink-0">
+              <Share2 size={18} />
+            </div>
             <div>
-              <h3 className="font-bold text-gray-900">Your Device</h3>
-              <p className="text-sm text-gray-500">{deviceName}</p>
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Your Device</p>
+              <p className="font-bold text-gray-900 text-sm leading-tight">{deviceName}</p>
             </div>
           </div>
-          <div className="space-y-2">
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-400">Network Group:</span>
-              <span className="font-mono text-gray-600 font-medium">{publicIp || 'Detecting...'}</span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-400">Role:</span>
-              <span className="font-medium text-gray-600">{isHost === null ? '...' : isHost ? '⭐ Host' : 'Guest'}</span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-400">Status:</span>
-              <span className={`font-medium ${status === 'ready' ? 'text-emerald-500' : 'text-amber-500'}`}>
-                {status === 'ready' ? 'Online & Discoverable' : 'Connecting...'}
-              </span>
-            </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-gray-400 font-mono">{publicIp || 'Detecting...'}</span>
+            <span className="text-gray-300">·</span>
+            <span className={`text-[11px] font-medium ${status === 'ready' ? 'text-emerald-500' : 'text-amber-500'}`}>
+              {status === 'ready' ? '● Online' : '● Connecting...'}
+            </span>
+            {status === 'initializing' && <Loader2 size={12} className="animate-spin text-blue-400 ml-1" />}
           </div>
         </div>
 
-        <div className="bg-gray-900 p-6 rounded-2xl shadow-xl text-white relative overflow-hidden">
-          <div className="relative z-10">
-            <h3 className="font-bold mb-2 flex items-center gap-2">
-              <Info size={18} className="text-blue-400" /> How it works
-            </h3>
-            <p className="text-sm text-gray-400 leading-relaxed">
-              The first device becomes the <strong>Host</strong>. Others join as guests.
-              Files transfer <strong>directly</strong> P2P — never through a server.
-            </p>
+        {/* Nearby Devices */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-50 flex items-center gap-2">
+            <Users size={15} className="text-gray-400" />
+            <span className="font-semibold text-gray-900 text-sm">Nearby Devices</span>
+            <span className="ml-1 px-1.5 py-0.5 bg-gray-100 text-gray-500 text-[10px] rounded-full">{peers.length}</span>
           </div>
-          <div className="absolute top-[-20%] right-[-10%] opacity-10"><ArrowRightLeft size={160} /></div>
+          <div className="p-3">
+            {peers.length === 0 ? (
+              <div className="flex items-center gap-3 py-3 px-1">
+                <div className="w-8 h-8 bg-gray-50 rounded-full flex items-center justify-center animate-pulse shrink-0">
+                  <Share2 className="text-gray-200" size={14} />
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500">Looking for devices...</p>
+                  <p className="text-[11px] text-gray-400">Open this page on another device on the same Wi-Fi.</p>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {peers.map(peer => (
+                  <label key={peer.id} className="group cursor-pointer">
+                    <input type="file" className="hidden" onChange={(e) => sendFile(peer.id, e.target.files[0])} />
+                    <div className="flex flex-col items-center gap-2 p-3 bg-gray-50 rounded-xl border border-transparent group-hover:border-blue-200 group-hover:bg-blue-50 transition-all duration-200">
+                      <div className="p-2 bg-white rounded-lg shadow-sm text-gray-400 group-hover:text-blue-500 transition-colors">
+                        {peer.type === 'mobile' ? <Smartphone size={20} /> : <Laptop size={20} />}
+                      </div>
+                      <div className="text-center min-w-0 w-full">
+                        <p className="text-xs font-semibold text-gray-900 truncate">{peer.name}</p>
+                        <p className="text-[9px] font-mono text-gray-400">{peer.id.slice(-6)}</p>
+                      </div>
+                      <div className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-lg text-[11px] font-medium text-gray-600 group-hover:bg-blue-500 group-hover:text-white group-hover:border-blue-500 transition-all w-full justify-center">
+                        <FileUp size={11} /> Send File
+                      </div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Debug Log */}
       <div className="bg-gray-950 rounded-2xl overflow-hidden">
         <div className="px-4 py-2 border-b border-gray-800 flex items-center gap-2">
-          <Terminal size={14} className="text-green-400" />
+          <Terminal size={13} className="text-green-400" />
           <span className="text-xs font-mono text-green-400">Debug Log</span>
           <button onClick={() => setLogs([])} className="ml-auto text-xs text-gray-500 hover:text-gray-300">clear</button>
         </div>
-        <div className="p-4 h-48 overflow-y-auto font-mono text-xs text-green-300 space-y-0.5">
+        <div className="p-3 h-36 overflow-y-auto font-mono text-xs text-green-300 space-y-0.5">
           {logs.length === 0
             ? <div className="text-gray-600">Waiting for events...</div>
             : logs.map((l, i) => <div key={i}>{l}</div>)}
         </div>
       </div>
 
-      {/* Peers */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-50 flex items-center justify-between">
-          <h3 className="font-bold text-gray-900 flex items-center gap-2">
-            <Users size={18} className="text-gray-400" />
-            Nearby Devices
-            <span className="ml-2 px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full">{peers.length}</span>
-          </h3>
-          {status === 'initializing' && <Loader2 size={18} className="animate-spin text-blue-500" />}
-        </div>
-        <div className="p-6">
-          {peers.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-4 animate-pulse">
-                <Share2 className="text-gray-200" size={32} />
-              </div>
-              <p className="text-gray-900 font-medium">Looking for devices...</p>
-              <p className="text-gray-400 text-sm mt-1">Open this page on another device on the same Wi-Fi.</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {peers.map(peer => (
-                <div key={peer.id} className="group p-4 bg-gray-50 rounded-2xl border border-transparent hover:border-blue-200 hover:bg-blue-50/50 transition-all duration-300">
-                  <div className="flex items-center gap-4 mb-4">
-                    <div className="p-3 bg-white rounded-xl shadow-sm text-gray-400 group-hover:text-blue-500 transition-colors">
-                      {getDeviceIcon(peer.type)}
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-gray-900">{peer.name}</h4>
-                      <p className="text-[10px] font-mono text-gray-400 uppercase tracking-widest">{peer.id.slice(-8)}</p>
-                    </div>
-                  </div>
-                  <label className="block">
-                    <input type="file" className="hidden" onChange={(e) => sendFile(peer.id, e.target.files[0])} />
-                    <div className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-600 cursor-pointer hover:bg-blue-500 hover:text-white hover:border-blue-500 transition-all shadow-sm">
-                      <FileUp size={16} /> Send File
-                    </div>
-                  </label>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Transfers */}
+      {/* Transfers — split into Received / Sent */}
       {transfers.length > 0 && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-50">
-            <h3 className="font-bold text-gray-900">Recent Transfers</h3>
-          </div>
-          <div className="divide-y divide-gray-50">
-            {transfers.map(t => (
-              <div key={t.id} className="p-4 flex items-center gap-4">
-                <div className={`p-2 rounded-lg ${t.role === 'send' ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                  {t.role === 'send' ? <FileUp size={20} /> : <Download size={20} />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-start mb-1">
-                    <p className="text-sm font-medium text-gray-900 truncate">{t.name}</p>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                      {t.role === 'send' ? 'Outgoing' : 'Incoming'}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                      <div className={`h-full transition-all duration-300 ${t.status === 'complete' ? 'bg-emerald-500' : t.status === 'error' ? 'bg-red-400' : 'bg-blue-500'}`}
-                        style={{ width: `${t.progress}%` }} />
-                    </div>
-                    <span className="text-xs font-medium text-gray-600 w-8">{t.progress}%</span>
-                  </div>
-                </div>
-                <div>
-                  {t.status === 'complete'
-                    ? t.role === 'receive'
-                      ? <button onClick={() => downloadFile(t)} className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"><CheckCircle size={20} /></button>
-                      : <CheckCircle className="text-emerald-500" size={20} />
-                    : t.status === 'error'
-                      ? <XCircle className="text-red-400" size={20} />
-                      : <Loader2 className="text-blue-500 animate-spin" size={20} />
-                  }
-                </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+          {/* Received */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-50 flex items-center gap-2">
+              <Download size={14} className="text-emerald-500" />
+              <span className="font-semibold text-gray-900 text-sm">Received</span>
+              <span className="ml-1 px-1.5 py-0.5 bg-gray-100 text-gray-500 text-[10px] rounded-full">{received.length}</span>
+            </div>
+            {received.length === 0 ? (
+              <p className="px-4 py-6 text-sm text-gray-400 text-center">No files received yet</p>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {received.map(t => <TransferRow key={t.id} t={t} />)}
               </div>
-            ))}
+            )}
           </div>
+
+          {/* Sent */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-50 flex items-center gap-2">
+              <FileUp size={14} className="text-amber-500" />
+              <span className="font-semibold text-gray-900 text-sm">Sent</span>
+              <span className="ml-1 px-1.5 py-0.5 bg-gray-100 text-gray-500 text-[10px] rounded-full">{sent.length}</span>
+            </div>
+            {sent.length === 0 ? (
+              <p className="px-4 py-6 text-sm text-gray-400 text-center">No files sent yet</p>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {sent.map(t => <TransferRow key={t.id} t={t} />)}
+              </div>
+            )}
+          </div>
+
         </div>
       )}
     </div>
