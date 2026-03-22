@@ -1,6 +1,5 @@
-import { AlertCircle, CheckCircle2, Download, Film, Loader2, Settings } from 'lucide-react';
-import React, { useEffect, useRef,useState } from 'react';
-
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Settings, Image as ImageIcon, CheckCircle2, AlertCircle, Download, Loader2, Music, Film } from 'lucide-react';
 import { formatBytes } from '../../../utils/helpers.js';
 
 const VideoTab = () => {
@@ -24,8 +23,6 @@ const VideoTab = () => {
   const ffmpegRef = useRef(null);
   const ffmpegLoadedRef = useRef(false);
   const resultUrlRef = useRef(null);
-
-  // formatBytes is now a shared utility defined at the top of the file
 
   // Cleanup Object URLs on unmount to prevent memory leaks
   useEffect(() => {
@@ -54,7 +51,6 @@ const VideoTab = () => {
   const generateVideo = async () => {
     setIsGenerating(true);
     setError('');
-    // Revoke previous Object URL to prevent memory leak
     if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current);
     setResultUrl(null);
     resultUrlRef.current = null;
@@ -66,7 +62,6 @@ const VideoTab = () => {
       const fpsVal = parseInt(fps) || 30;
       const totalFrames = Math.ceil(dur * fpsVal);
 
-      // Render frames to canvas
       setProgress(`Rendering ${totalFrames} frames on canvas...`);
       const canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
@@ -78,14 +73,11 @@ const VideoTab = () => {
       for (let f = 0; f < totalFrames; f++) {
         const t = f / fpsVal;
 
-        // Draw frame - always color bars
         const barW = w / 7;
         const colors = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899'];
         colors.forEach((c, i) => { ctx.fillStyle = c; ctx.fillRect(i * barW, 0, barW, h); });
 
-        // Overlay text
         const fs = Math.max(16, Math.min(w, h) / 12);
-        // Semi-transparent dark band for readability
         ctx.fillStyle = 'rgba(0,0,0,0.45)';
         ctx.fillRect(0, h / 2 - fs * 1.4, w, fs * 3);
         ctx.fillStyle = '#ffffff';
@@ -97,14 +89,12 @@ const VideoTab = () => {
         ctx.fillStyle = 'rgba(255,255,255,0.8)';
         ctx.fillText(`${w} × ${h} • ${format.toUpperCase()} • ${t.toFixed(2)}s`, w / 2, h / 2 + fs * 0.8);
 
-        // Timecode bar
         const progress_ratio = f / (totalFrames - 1 || 1);
         ctx.fillStyle = 'rgba(0,0,0,0.4)';
         ctx.fillRect(0, h - 8, w, 8);
         ctx.fillStyle = '#3b82f6';
         ctx.fillRect(0, h - 8, w * progress_ratio, 8);
 
-        // Convert frame to PNG blob
         const frameBlob = await new Promise(res => canvas.toBlob(res, 'image/png'));
         const frameData = await fetchFile(frameBlob);
         const frameNum = String(f).padStart(5, '0');
@@ -113,7 +103,29 @@ const VideoTab = () => {
         if (f % 10 === 0) setProgress(`Uploading frames: ${f + 1}/${totalFrames}`);
       }
 
-      setProgress('Encoding video with FFmpeg...');
+      // ── Encoding with ETA from FFmpeg log ──
+      setProgress('Encoding video...');
+      const encodeStartTime = Date.now();
+
+      const logHandler = ({ message }) => {
+        // FFmpeg log output has the format: "frame=  45 fps= 12 q=28.0 size= 256kB time=00:00:01.50 ..."
+        const frameMatch = message.match(/frame=\s*(\d+)/);
+        if (!frameMatch) return;
+
+        const encodedFrames = parseInt(frameMatch[1]);
+        if (encodedFrames <= 0) return;
+
+        const pct = Math.min(encodedFrames / totalFrames, 1);
+        const elapsed = (Date.now() - encodeStartTime) / 1000; // seconds
+        const eta = (elapsed / pct) * (1 - pct);
+
+        const pctStr = Math.round(pct * 100) + '%';
+        const etaStr = eta > 1 ? `~${Math.round(eta)}s left` : 'finishing...';
+
+        setProgress(`Encoding... ${pctStr} — ${etaStr}`);
+      };
+
+      ffmpeg.on('log', logHandler);
 
       const codecMap = {
         mp4: ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast', '-crf', '23'],
@@ -136,9 +148,11 @@ const VideoTab = () => {
         `output.${format}`
       ]);
 
+      // Remove listener after encoding
+      ffmpeg.off('log', logHandler);
+
       const data = await ffmpeg.readFile(`output.${format}`);
 
-      // Clean up FFmpeg virtual filesystem to free WASM memory
       setProgress('Cleaning up temporary files...');
       for (let f = 0; f < totalFrames; f++) {
         try { await ffmpeg.deleteFile(`frame${String(f).padStart(5, '0')}.png`); } catch { }
