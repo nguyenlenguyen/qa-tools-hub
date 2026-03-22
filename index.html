@@ -1,25 +1,49 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="QA Tools Hub — A collection of essential utilities for Software Testing & QA: media generators, JSON formatter, epoch converter, color converter, Base64 encoder, text analyzer, and diff checker." />
-    <meta name="theme-color" content="#111827" />
-    <title>QA Tools Hub — Essential Utilities for Software Testing & QA</title>
-    <!-- PeerJS for WebRTC File Share tool -->
-    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js', { scope: '/' });
-        });
-      }
-    </script>
-  </body>
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description"
+    content="QA Tools Hub — A collection of essential utilities for Software Testing & QA: media generators, converter, JSON formatter, epoch converter, color converter, Base64 encoder, text analyzer, and diff checker." />
+  <meta name="keywords"
+    content="QA tools, software testing, image converter, video converter, audio converter, JSON formatter, base64 encoder, text diff checker, epoch converter, QA utilities" />
+  <meta name="author" content="Nguyen Le Nguyen" />
+  <meta name="theme-color" content="#111827" />
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://qa-tools.pages.dev/" />
+  <meta property="og:title" content="QA Tools Hub — Essential Utilities for Software Testing & QA" />
+  <meta property="og:description"
+    content="A powerful toolset for QA engineers and developers. Convert media, format JSON, encode text, and more—all 100% locally in your browser." />
+  <meta property="og:image" content="https://qa-tools.pages.dev/og-image.png" />
+
+  <!-- Twitter -->
+  <meta property="twitter:card" content="summary_large_image" />
+  <meta property="twitter:url" content="https://qa-tools.pages.dev/" />
+  <meta property="twitter:title" content="QA Tools Hub — Essential Utilities for Software Testing & QA" />
+  <meta property="twitter:description"
+    content="A powerful toolset for QA engineers and developers. Convert media, format JSON, encode text, and more—all 100% locally in your browser." />
+  <meta property="twitter:image" content="https://qa-tools.pages.dev/og-image.png" />
+
+  <title>QA Tools Hub — Essential Utilities for Software Testing & QA</title>
+  <!-- PeerJS for WebRTC File Share tool -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.jsx"></script>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js', { scope: '/' });
+      });
+    }
+  </script>
+</body>
+
 </html>
