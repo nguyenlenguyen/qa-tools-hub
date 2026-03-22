@@ -1,4 +1,4 @@
-import { AlignLeft, Clock, FileJson, Film, GitCompare, Lock, Palette, Share2, Type } from 'lucide-react';
+import { AlignLeft, Clock, FileJson, Film, GitCompare, Lock, Palette, RefreshCw, Share2, Type } from 'lucide-react';
 import { lazy } from 'react';
 
 export const TOOLS_CONFIG = [
@@ -10,6 +10,15 @@ export const TOOLS_CONFIG = [
     component: lazy(() => import('../components/tools/MediaGenerator/index.jsx')),
     color: 'text-blue-500',
     bgColor: 'bg-blue-50'
+  },
+  {
+    id: 'media-converter',
+    name: 'Media Converter',
+    description: 'Convert images, audio, and videos between different formats.',
+    icon: RefreshCw,
+    component: lazy(() => import('../components/tools/MediaConverter/index.jsx')),
+    color: 'text-orange-500',
+    bgColor: 'bg-orange-50'
   },
   {
     id: 'color-converter',
