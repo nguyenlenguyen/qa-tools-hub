@@ -626,12 +626,14 @@ export default function PeerFileShare() {
   return (
     <div className="space-y-4 pb-6">
 
-      {/* Status bar */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-4 py-3 flex items-center gap-3">
-        <div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg shrink-0">
-          <Share2 size={15} />
-        </div>
-        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+      {/* Status bar — 2-row layout so it stays comfortable on mobile */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-4 py-3 flex flex-col gap-2">
+
+        {/* Row 1: icon · device name (editable) · leave */}
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg shrink-0">
+            <Share2 size={14} />
+          </div>
           <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider shrink-0">Your Device</span>
           {editingName ? (
             <div className="flex items-center gap-1 flex-1 min-w-0">
@@ -650,7 +652,7 @@ export default function PeerFileShare() {
                   if (e.key === 'Escape') setEditingName(false);
                 }}
                 onBlur={() => setEditingName(false)}
-                className="font-semibold text-gray-900 text-sm bg-transparent border-b border-blue-400 outline-none min-w-0 w-32"
+                className="font-semibold text-gray-900 text-sm bg-transparent border-b border-blue-400 outline-none min-w-0 flex-1"
               />
               <button
                 onMouseDown={e => {
@@ -663,7 +665,7 @@ export default function PeerFileShare() {
                     setEditingName(false);
                   }
                 }}
-                className="sm:hidden text-[11px] font-medium text-white bg-blue-500 px-2 py-0.5 rounded-md shrink-0"
+                className="text-[11px] font-medium text-white bg-blue-500 px-2 py-0.5 rounded-md shrink-0"
               >
                 Save
               </button>
@@ -671,7 +673,7 @@ export default function PeerFileShare() {
           ) : (
             <button
               onClick={() => { setNameInput(deviceName); setEditingName(true); }}
-              className="flex items-center gap-1 group min-w-0"
+              className="flex items-center gap-1 group min-w-0 flex-1"
             >
               <span className="font-semibold text-gray-900 text-sm truncate">{deviceName}</span>
               <Pencil size={11} className="text-gray-300 group-hover:text-blue-400 transition-colors shrink-0" />
@@ -679,31 +681,33 @@ export default function PeerFileShare() {
           )}
         </div>
 
-        {/* Room badge + leave button */}
-        <div className="ml-auto flex items-center gap-2 shrink-0">
+        {/* Row 2: room badge · leave · connection status */}
+        <div className="flex items-center gap-2 pl-1">
           {isPublicRoom ? (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 rounded-lg">
-              <Globe size={11} className="text-emerald-500" />
-              <span className="text-[11px] font-bold text-emerald-600">Public</span>
+            <div className="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 rounded-md">
+              <Globe size={10} className="text-emerald-500" />
+              <span className="text-[11px] font-bold text-emerald-600">Public Room</span>
             </div>
           ) : (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 rounded-lg">
-              <Hash size={11} className="text-blue-400" />
+            <div className="flex items-center gap-1 px-2 py-0.5 bg-blue-50 rounded-md">
+              <Hash size={10} className="text-blue-400" />
               <span className="text-[11px] font-bold text-blue-600 font-mono tracking-wider">{roomCode}</span>
             </div>
           )}
-          <span className="hidden sm:inline text-gray-200">·</span>
-          <span className={`text-[11px] font-semibold hidden sm:inline ${status === 'ready' ? 'text-emerald-500' : 'text-amber-500'}`}>
-            {status === 'ready' ? '● Online' : '● Connecting...'}
-          </span>
-          {status === 'initializing' && <Loader2 size={12} className="animate-spin text-blue-400" />}
           <button
             onClick={handleLeaveRoom}
             title="Leave room"
-            className="p-1.5 text-gray-300 hover:text-red-400 transition-colors rounded-lg hover:bg-red-50"
+            className="p-1 text-gray-300 hover:text-red-400 transition-colors rounded-md hover:bg-red-50 shrink-0"
           >
-            <LogOut size={14} />
+            <LogOut size={12} />
           </button>
+          <span className="text-gray-200 text-xs">·</span>
+          <span className={`text-[11px] font-semibold flex items-center gap-1 ${status === 'ready' ? 'text-emerald-500' : 'text-amber-500'}`}>
+            {status === 'initializing'
+              ? <><Loader2 size={10} className="animate-spin" /> Connecting...</>
+              : '● Online'
+            }
+          </span>
         </div>
       </div>
 
