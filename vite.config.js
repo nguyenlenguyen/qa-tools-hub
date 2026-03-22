@@ -8,23 +8,10 @@ export default defineConfig({
     tailwindcss(),
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg'],
-      manifest: {
-        name: 'QA Tools Hub',
-        short_name: 'QA Tools',
-        description: 'Essential Utilities for Software Testing & QA',
-        theme_color: '#111827',
-        background_color: '#ffffff',
-        display: 'standalone',
-        icons: [
-          {
-            src: 'favicon.svg',
-            sizes: '192x192 512x512',
-            type: 'image/svg+xml',
-            purpose: 'any maskable'
-          }
-        ]
+      injectRegister: null,
+      manifest: false,
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest}']
       }
     })
   ],
