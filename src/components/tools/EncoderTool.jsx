@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Trash2, Check, Copy, AlertCircle, CheckCircle2, Settings, EyeOff, Eye, Loader2, Binary, Lock } from 'lucide-react';
+import { AlertCircle, Binary, Check, CheckCircle2, Copy, Eye, EyeOff, Loader2, Lock,Settings, Trash2 } from 'lucide-react';
+import React, { useEffect,useState } from 'react';
+
 import { copyTextToClipboard } from '../../utils/helpers.js';
 
 

@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, Image as ImageIcon, CheckCircle2, AlertCircle, Download, Loader2, Music, Film } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Download,Image as ImageIcon, Settings } from 'lucide-react';
+import React, { useEffect, useRef,useState } from 'react';
+
 import { formatBytes } from '../../../utils/helpers.js';
-import Card from '../../ui/Card';
-import Button from '../../ui/Button';
 
 const ImageTab = () => {
   const [width, setWidth] = useState(500);

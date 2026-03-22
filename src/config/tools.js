@@ -1,5 +1,5 @@
-import { lazy } from 'react';
 import { AlignLeft, Clock, FileJson, Film, GitCompare, Lock, Palette, Share2, Type } from 'lucide-react';
+import { lazy } from 'react';
 
 export const TOOLS_CONFIG = [
   {

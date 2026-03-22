@@ -1,7 +1,8 @@
+import { Film,Image as ImageIcon, Music } from 'lucide-react';
 import React, { useState } from 'react';
-import { Image as ImageIcon, Music, Film } from 'lucide-react';
-import ImageTab from './ImageTab';
+
 import AudioTab from './AudioTab';
+import ImageTab from './ImageTab';
 import VideoTab from './VideoTab';
 
 const MediaGenerator = () => {

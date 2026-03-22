@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Check, Copy } from 'lucide-react';
+import React, { useCallback, useEffect,useState } from 'react';
+
 import { copyTextToClipboard } from '../../utils/helpers.js';
 
 const DummyTextGenerator = () => {

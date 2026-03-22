@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Trash2, GitCompare, Code } from 'lucide-react';
+import { Code,GitCompare, Trash2 } from 'lucide-react';
+import React, {useState } from 'react';
 
 const TextDiffChecker = () => {
   const [originalText, setOriginalText] = useState('');

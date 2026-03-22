@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Palette, Code, Copy, Check } from 'lucide-react';
+import { Check, Copy, Palette } from 'lucide-react';
+import React, {useState } from 'react';
+
 import { copyTextToClipboard } from '../../utils/helpers.js';
 
 const ColorConverter = () => {

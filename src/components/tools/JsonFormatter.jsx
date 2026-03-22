@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Trash2, Minimize2, Maximize2, Check, Copy, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2,Copy, Maximize2, Minimize2, Trash2 } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo,useState } from 'react';
+
 import { copyTextToClipboard } from '../../utils/helpers.js';
 
 const JsonFormatter = () => {

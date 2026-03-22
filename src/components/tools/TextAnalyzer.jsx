@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { AlignLeft, Trash2 } from 'lucide-react';
+import React, {useState } from 'react';
 
 const TextAnalyzer = () => {
   const [text, setText] = useState('');

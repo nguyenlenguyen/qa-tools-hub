@@ -1,5 +1,5 @@
-import React from 'react';
 import { Loader2 } from 'lucide-react';
+import React from 'react';
 
 export default function Button({ 
   children, onClick, disabled, loading, variant = 'primary', className = '', icon: Icon 
