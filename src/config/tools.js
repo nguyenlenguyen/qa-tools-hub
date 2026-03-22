@@ -14,7 +14,7 @@ export const TOOLS_CONFIG = [
   {
     id: 'media-converter',
     name: 'Media Converter',
-    description: 'Convert images, audio, and videos between different formats.',
+    description: 'Convert images, audio, and videos between different formats (100% Local processing).',
     icon: RefreshCw,
     component: lazy(() => import('../components/tools/MediaConverter/index.jsx')),
     color: 'text-orange-500',
