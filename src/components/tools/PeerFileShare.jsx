@@ -1,6 +1,7 @@
 import {
   CheckCircle, Copy, Download, FileUp, Laptop, Loader2,
-  MessageSquare, Pencil, Share2, Smartphone, Users, XCircle, LogOut, Hash, Globe
+  MessageSquare, Pencil, Share2, Smartphone, Users, XCircle, LogOut, Hash, Globe,
+  Settings, Info, Plus, Trash2, Shield
 } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 
@@ -10,6 +11,12 @@ const CHUNK_SIZE = 16 * 1024;
 const DEVICE_NAMES = [
   'Swift Fox', 'Bold Eagle', 'Cool Penguin', 'Lazy Panda', 'Happy Dolphin',
   'Lunar Wolf', 'Zen Tiger', 'Neon Cat', 'Cosmic Owl', 'Desert Camel'
+];
+
+const DEFAULT_ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:global.stun.twilio.com:3478' },
+  { urls: 'stun:stun.services.mozilla.com' }
 ];
 
 const MSG_FILE_START = 1;
@@ -203,6 +210,17 @@ export default function PeerFileShare() {
   const [transfers, setTransfers] = useState([]);
   const [status, setStatus] = useState('initializing');
   const [error, setError] = useState(null);
+  const [showSettings, setShowSettings] = useState(false);
+
+  const [iceServers, setIceServers] = useState(() => {
+    const saved = localStorage.getItem('qa-tools-ice-servers');
+    return saved ? JSON.parse(saved) : DEFAULT_ICE_SERVERS;
+  });
+
+  const [newStunUrl, setNewStunUrl] = useState('');
+  const [newTurnUrl, setNewTurnUrl] = useState('');
+  const [newTurnUser, setNewTurnUser] = useState('');
+  const [newTurnPass, setNewTurnPass] = useState('');
 
   const [deviceName, setDeviceName] = useState(() => {
     const saved = localStorage.getItem('qa-tools-peer-name');
@@ -250,12 +268,17 @@ export default function PeerFileShare() {
     if (!roomCode) return;
     if (initCalledRef.current) return;
     initCalledRef.current = true;
-    init(roomCode, isPublicRoom);
+    init(roomCode, isPublicRoom, iceServers);
     return () => {
       if (mainPeerRef.current) mainPeerRef.current.destroy();
       if (anchorPeerRef.current) anchorPeerRef.current.destroy();
     };
   }, [roomCode]); // eslint-disable-line
+
+  const saveIceServers = (servers) => {
+    setIceServers(servers);
+    localStorage.setItem('qa-tools-ice-servers', JSON.stringify(servers));
+  };
 
   const myMeta = () => ({
     id: myPeerIdRef.current,
@@ -274,7 +297,7 @@ export default function PeerFileShare() {
     setPeers(members.filter(m => m.id !== myPeerIdRef.current));
   };
 
-  const init = async (code, isPublic) => {
+  const init = async (code, isPublic, currentIceServers) => {
     try {
       setStatus('initializing');
 
@@ -298,13 +321,18 @@ export default function PeerFileShare() {
       if (!window.Peer) throw new Error('PeerJS not loaded.');
 
       const randomId = `${ROOM_PREFIX}-m-${Math.random().toString(36).slice(2, 10)}`;
-      const mainPeer = new window.Peer(randomId, { secure: true });
+      const peerConfig = {
+        secure: true,
+        config: { iceServers: currentIceServers || iceServers }
+      };
+
+      const mainPeer = new window.Peer(randomId, peerConfig);
       mainPeerRef.current = mainPeer;
 
       mainPeer.on('open', (id) => {
         myPeerIdRef.current = id;
         setMyPeerId(id);
-        tryClaimAnchor(anchorId);
+        tryClaimAnchor(anchorId, peerConfig);
       });
 
       mainPeer.on('connection', (conn) => {
@@ -322,10 +350,10 @@ export default function PeerFileShare() {
     }
   };
 
-  const tryClaimAnchor = (anchorId) => {
+  const tryClaimAnchor = (anchorId, peerConfig) => {
     if (anchorPeerRef.current) { anchorPeerRef.current.destroy(); anchorPeerRef.current = null; }
 
-    const ap = new window.Peer(anchorId, { secure: true });
+    const ap = new window.Peer(anchorId, peerConfig);
     anchorPeerRef.current = ap;
 
     ap.on('open', () => {
@@ -708,8 +736,167 @@ export default function PeerFileShare() {
               : '● Online'
             }
           </span>
+          <div className="flex-1" />
+          <button
+            onClick={() => setShowSettings(true)}
+            className="flex items-center gap-1.5 px-2 py-1 bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-md transition-colors border border-gray-100"
+          >
+            <Settings size={12} />
+            <span className="text-[10px] font-bold uppercase tracking-tight">Network Settings</span>
+          </button>
         </div>
       </div>
+
+      {/* Connection Settings Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-blue-50 text-blue-500 rounded-xl">
+                  <Shield size={20} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-900">Network Strategy</h3>
+                  <p className="text-[11px] text-gray-500 font-medium uppercase tracking-wider">Bypass firewall & NAT</p>
+                </div>
+              </div>
+              <button onClick={() => setShowSettings(false)} className="p-2 hover:bg-gray-100 rounded-full text-gray-400 transition-colors">
+                <XCircle size={24} />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto max-h-[70vh] custom-scrollbar space-y-6">
+              {/* Info Box */}
+              <div className="flex gap-3 p-4 bg-blue-50 rounded-2xl border border-blue-100">
+                <Info className="text-blue-500 shrink-0 mt-0.5" size={18} />
+                <div className="text-sm text-blue-800 leading-relaxed">
+                  <p className="font-semibold mb-1">Struggling to connect?</p>
+                  Corporate networks often block direct P2P connections. Adding a <b>TURN server</b> (relay) is the best way to bypass these restrictions.
+                </div>
+              </div>
+
+              {/* Server List */}
+              <div className="space-y-3">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest px-1">Active ICE Servers</label>
+                <div className="space-y-2">
+                  {iceServers.map((server, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100 group">
+                      <div className="min-w-0 pr-4">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-bold ${server.username ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                            {server.username ? 'TURN' : 'STUN'}
+                          </span>
+                          <span className="text-xs font-mono text-gray-600 truncate">{Array.isArray(server.urls) ? server.urls[0] : server.urls}</span>
+                        </div>
+                        {server.username && <p className="text-[10px] text-gray-400 mt-0.5">User: {server.username}</p>}
+                      </div>
+                      <button
+                        onClick={() => saveIceServers(iceServers.filter((_, i) => i !== idx))}
+                        className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Add New */}
+              <div className="space-y-4 pt-2 border-t border-gray-100">
+                <div className="grid grid-cols-1 gap-4">
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5 ml-1">Add Custom STUN</label>
+                    <div className="flex gap-2">
+                      <input
+                        placeholder="stun:your-server.com:3478"
+                        value={newStunUrl}
+                        onChange={e => setNewStunUrl(e.target.value)}
+                        className="flex-1 px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:border-blue-400 transition-colors"
+                      />
+                      <button
+                        onClick={() => {
+                          if (newStunUrl.trim()) {
+                            saveIceServers([...iceServers, { urls: newStunUrl.trim() }]);
+                            setNewStunUrl('');
+                          }
+                        }}
+                        className="p-2.5 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors shadow-sm shadow-blue-200"
+                      >
+                        <Plus size={18} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5 ml-1">Add Custom TURN (Relay)</label>
+                    <div className="space-y-2 bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                      <input
+                        placeholder="turn:your-server.com:3478"
+                        value={newTurnUrl}
+                        onChange={e => setNewTurnUrl(e.target.value)}
+                        className="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm outline-none focus:border-blue-400 transition-colors"
+                      />
+                      <div className="flex gap-2">
+                        <input
+                          placeholder="Username"
+                          value={newTurnUser}
+                          onChange={e => setNewTurnUser(e.target.value)}
+                          className="flex-1 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm outline-none focus:border-blue-400 transition-colors"
+                        />
+                        <input
+                          placeholder="Password"
+                          type="password"
+                          value={newTurnPass}
+                          onChange={e => setNewTurnPass(e.target.value)}
+                          className="flex-1 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm outline-none focus:border-blue-400 transition-colors"
+                        />
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (newTurnUrl.trim() && newTurnUser.trim() && newTurnPass.trim()) {
+                            saveIceServers([...iceServers, {
+                              urls: newTurnUrl.trim(),
+                              username: newTurnUser.trim(),
+                              credential: newTurnPass.trim()
+                            }]);
+                            setNewTurnUrl(''); setNewTurnUser(''); setNewTurnPass('');
+                          }
+                        }}
+                        className="w-full py-2.5 bg-gray-900 text-white font-bold rounded-xl hover:bg-gray-800 transition-all text-xs"
+                      >
+                        Add TURN Server
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-5 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
+              <button
+                onClick={() => {
+                  saveIceServers(DEFAULT_ICE_SERVERS);
+                  setIceServers(DEFAULT_ICE_SERVERS);
+                }}
+                className="text-xs font-bold text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                Reset to Default
+              </button>
+              <button
+                onClick={() => {
+                  setShowSettings(false);
+                  handleLeaveRoom(); // Trigger re-init
+                  window.location.reload(); // Simple way to re-init with new servers
+                }}
+                className="px-6 py-2.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-md shadow-blue-200 text-sm"
+              >
+                Apply & Restart
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Nearby Devices */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
