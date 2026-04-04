@@ -5,7 +5,7 @@ import { copyTextToClipboard } from '../../utils/helpers.js';
 
 const DummyTextGenerator = () => {
   const [paragraphs, setParagraphs] = useState(1);
-  const [characters, setCharacters] = useState('');
+  const [characters, setCharacters] = useState('500');
   const [text, setText] = useState('');
   const [isCopied, setIsCopied] = useState(false);
 
