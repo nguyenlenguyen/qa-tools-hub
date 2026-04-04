@@ -384,7 +384,7 @@ const AesTab = () => {
 const EncoderTool = () => {
   const [activeTab, setActiveTab] = useState('base64');
   const tabs = [
-    { id: 'base64', label: 'Base64', icon: Binary },
+    { id: 'base64', label: 'Base64 Encode / Decode', icon: Binary },
     { id: 'aes', label: 'AES Encrypt / Decrypt', icon: Lock },
   ];
   return (
