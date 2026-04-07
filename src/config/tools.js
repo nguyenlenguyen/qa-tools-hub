@@ -1,4 +1,4 @@
-import { AlignLeft, Clock, FileJson, Film, GitCompare, Lock, Palette, RefreshCw, Share2, Type } from 'lucide-react';
+import { AlignLeft, BookOpen, Clock, FileJson, Film, GitCompare, Lock, Palette, RefreshCw, Share2, Type } from 'lucide-react';
 import { lazy } from 'react';
 
 export const TOOLS_CONFIG = [
@@ -91,5 +91,14 @@ export const TOOLS_CONFIG = [
     component: lazy(() => import('../components/tools/PeerFileShare.jsx')),
     color: 'text-cyan-500',
     bgColor: 'bg-cyan-50'
+  },
+  {
+    id: 'markdown-preview',
+    name: 'Markdown Preview',
+    description: 'Write and preview Markdown with live preview, export to HTML.',
+    icon: BookOpen,
+    component: lazy(() => import('../components/tools/MarkdownPreview.jsx')),
+    color: 'text-violet-500',
+    bgColor: 'bg-violet-50'
   }
 ];
