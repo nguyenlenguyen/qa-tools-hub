@@ -1,5 +1,5 @@
-import { ChevronRight, Code, Loader2,Menu, X } from 'lucide-react';
-import React, { Suspense,useEffect, useState } from 'react';
+import { ChevronRight, Code, Loader2, Menu, X } from 'lucide-react';
+import React, { Suspense, useEffect, useState } from 'react';
 
 import { TOOLS_CONFIG } from './config/tools.js';
 
@@ -96,13 +96,12 @@ export default function App() {
                 Internal tool platform supporting Software Testing & QA processes.
               </p>
             </div>
-            
+
             <div className="flex items-center gap-3 px-1 group cursor-default">
               <div className="relative">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-gray-900 to-gray-700 flex items-center justify-center text-white font-bold text-sm shadow-lg group-hover:scale-105 transition-transform duration-200">
-                  NL
+                  NLN
                 </div>
-                <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 border-2 border-white rounded-full shadow-sm"></div>
               </div>
               <div className="flex flex-col">
                 <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Created By</span>
@@ -162,18 +161,8 @@ export default function App() {
                 </div>
               );
             })}
-
-            {/* Page Footer */}
-            <footer className="mt-8 py-6 border-t border-gray-100 flex flex-col md:flex-row justify-between items-center gap-4 text-[11px] text-gray-400 font-medium">
-              <p>© {new Date().getFullYear()} QA Tools Hub</p>
-              <div className="flex items-center gap-1.5">
-                <span className="opacity-75 font-normal">Crafted with ❤️ by</span>
-                <span className="text-gray-900 font-bold hover:text-indigo-600 transition-colors cursor-default">Nguyễn Lê Nguyên</span>
-              </div>
-            </footer>
           </div>
         </div>
-
       </main>
 
       {/* CSS Scrollbar */}
