@@ -105,3 +105,10 @@ All tools run **entirely in your browser**. Data is processed locally and never 
 
 This project is open source under the [MIT License](LICENSE).
 
+---
+
+## 👨‍💻 Author
+
+Created by **Nguyễn Lê Nguyên**
+- GitHub: [@nguyenlenguyen](https://github.com/nguyenlenguyen)
+- Website: https://qa-tools.pages.dev/
