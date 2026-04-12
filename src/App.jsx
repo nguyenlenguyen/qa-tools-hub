@@ -91,12 +91,6 @@ export default function App() {
         {/* Sidebar Footer */}
         <div className="p-6 mt-auto border-t border-gray-100">
           <div className="space-y-4">
-            <div className="bg-gray-50 rounded-xl p-3 border border-gray-100">
-              <p className="text-[11px] text-gray-500 leading-relaxed font-medium">
-                Internal tool platform supporting Software Testing & QA processes.
-              </p>
-            </div>
-
             <div className="flex items-center gap-3 px-1 group cursor-default">
               <div className="relative">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-gray-900 to-gray-700 flex items-center justify-center text-white font-bold text-sm shadow-lg group-hover:scale-105 transition-transform duration-200">
