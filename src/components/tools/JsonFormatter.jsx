@@ -136,7 +136,7 @@ const JsonFormatter = () => {
 
       <div className="flex-1 flex flex-col xl:flex-row min-h-0">
         <div className="flex-1 flex flex-col border-b xl:border-b-0 xl:border-r border-gray-200 bg-white relative min-h-[250px] xl:min-h-0">
-          <div className="px-4 py-2 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+          <div className="h-10 px-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
             <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Input (Raw)</span>
           </div>
           <textarea
@@ -149,7 +149,7 @@ const JsonFormatter = () => {
         </div>
 
         <div className="flex-1 flex flex-col bg-[#fafafa] relative min-h-[250px] xl:min-h-0">
-          <div className="px-4 py-2 border-b border-gray-100 bg-white/50 flex justify-between items-center">
+          <div className="h-10 px-4 border-b border-gray-100 bg-white/50 flex justify-between items-center">
             <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Output (Formatted)</span>
             {!error && output && (
               <span className="flex items-center gap-1 text-xs font-medium text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
