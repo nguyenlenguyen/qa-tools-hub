@@ -8,9 +8,12 @@ export default defineConfig({
     tailwindcss(),
     react(),
     VitePWA({
-      injectRegister: null,
+      registerType: 'autoUpdate',
+      injectRegister: 'auto',
       manifest: false,
       workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest}']
       }
     })
