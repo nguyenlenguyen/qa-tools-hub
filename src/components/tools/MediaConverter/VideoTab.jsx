@@ -6,6 +6,7 @@ import { formatBytes } from '../../../utils/helpers.js';
 const VideoTab = () => {
   const [file, setFile] = useState(null);
   const [format, setFormat] = useState('mp4');
+  const [quality, setQuality] = useState('original');
   
   const [isConverting, setIsConverting] = useState(false);
   const [progress, setProgress] = useState('');
@@ -133,12 +134,17 @@ const VideoTab = () => {
       
       ffmpeg.on('log', logHandler);
       
+      const qualityMap = {
+        x264: { original: '12', high: '18', medium: '23', low: '30' },
+        vp9: { original: '15', high: '20', medium: '30', low: '40' }
+      };
+
       const codecMap = {
-        mp4: ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast'],
-        mov: ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast'],
-        avi: ['-c:v', 'libx264', '-pix_fmt', 'yuv420p'],
-        mkv: ['-c:v', 'libx264', '-pix_fmt', 'yuv420p'],
-        webm: ['-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', '30'],
+        mp4: ['-c:v', 'libx264', '-crf', qualityMap.x264[quality], '-pix_fmt', 'yuv420p', '-preset', 'fast'],
+        mov: ['-c:v', 'libx264', '-crf', qualityMap.x264[quality], '-pix_fmt', 'yuv420p', '-preset', 'fast'],
+        avi: ['-c:v', 'libx264', '-crf', qualityMap.x264[quality], '-pix_fmt', 'yuv420p'],
+        mkv: ['-c:v', 'libx264', '-crf', qualityMap.x264[quality], '-pix_fmt', 'yuv420p'],
+        webm: ['-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', qualityMap.vp9[quality]],
       };
       
       const codecArgs = codecMap[format] || codecMap.mp4;
@@ -287,6 +293,18 @@ const VideoTab = () => {
           </div>
 
           <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">Output Quality</label>
+            <div className="grid grid-cols-4 gap-2">
+              {['original', 'low', 'medium', 'high'].map(q => (
+                <button key={q} onClick={() => setQuality(q)}
+                  className={`py-1.5 px-2 text-[11px] font-bold rounded-lg border transition-colors uppercase ${quality === q ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
             <label className="text-sm font-medium text-gray-700">Dimensions</label>
             <div className="grid grid-cols-3 gap-2">
               {['original', 'percentage', 'custom'].map(mode => (
@@ -300,18 +318,26 @@ const VideoTab = () => {
               ))}
             </div>
             
-            {resizeMode === 'percentage' && (
-               <div className="mt-3 flex items-center gap-3 bg-gray-50 p-3 rounded-xl border border-gray-200">
-                 <input 
-                   type="range" 
-                   min="10" 
-                   max="100" 
-                   step="1" 
-                   value={resizePercentage} 
-                   onChange={(e) => setResizePercentage(parseInt(e.target.value))} 
-                   className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600" 
-                 />
-                 <span className="text-sm font-medium w-12 text-right">{resizePercentage}%</span>
+            {resizeMode === 'percentage' && originalMeta && (
+               <div className="mt-3 space-y-2 bg-gray-50 p-3 rounded-xl border border-gray-200">
+                 <div className="flex items-center gap-3">
+                   <input 
+                     type="range" 
+                     min="10" 
+                     max="100" 
+                     step="1" 
+                     value={resizePercentage} 
+                     onChange={(e) => setResizePercentage(parseInt(e.target.value))} 
+                     className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600" 
+                   />
+                   <span className="text-sm font-medium w-12 text-right">{resizePercentage}%</span>
+                 </div>
+                 <div className="text-[11px] text-gray-500 font-medium flex justify-between px-1">
+                   <span>Estimated:</span>
+                   <span className="text-blue-600 font-bold">
+                     {Math.round((originalMeta.width * resizePercentage / 100) / 2) * 2} x {Math.round((originalMeta.height * resizePercentage / 100) / 2) * 2} px
+                   </span>
+                 </div>
                </div>
             )}
             

@@ -248,18 +248,26 @@ const ImageTab = () => {
               ))}
             </div>
             
-            {resizeMode === 'percentage' && (
-               <div className="mt-3 flex items-center gap-3 bg-gray-50 p-3 rounded-xl border border-gray-200">
-                 <input 
-                   type="range" 
-                   min="10" 
-                   max="100" 
-                   step="1" 
-                   value={resizePercentage} 
-                   onChange={(e) => setResizePercentage(parseInt(e.target.value))} 
-                   className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600" 
-                 />
-                 <span className="text-sm font-medium w-12 text-right">{resizePercentage}%</span>
+            {resizeMode === 'percentage' && originalMeta && (
+               <div className="mt-3 space-y-2 bg-gray-50 p-3 rounded-xl border border-gray-200">
+                 <div className="flex items-center gap-3">
+                   <input 
+                     type="range" 
+                     min="10" 
+                     max="100" 
+                     step="1" 
+                     value={resizePercentage} 
+                     onChange={(e) => setResizePercentage(parseInt(e.target.value))} 
+                     className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600" 
+                   />
+                   <span className="text-sm font-medium w-12 text-right">{resizePercentage}%</span>
+                 </div>
+                 <div className="text-[11px] text-gray-500 font-medium flex justify-between px-1">
+                   <span>Estimated:</span>
+                   <span className="text-blue-600 font-bold">
+                     {Math.max(1, Math.round(originalMeta.width * resizePercentage / 100))} x {Math.max(1, Math.round(originalMeta.height * resizePercentage / 100))} px
+                   </span>
+                 </div>
                </div>
             )}
             
