@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, Download, Loader2, Music, Settings, Upload } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, Clipboard, Download, Loader2, Music, Settings, Upload } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 
 import { formatBytes } from '../../../utils/helpers.js';
@@ -12,6 +12,7 @@ const AudioTab = () => {
   const [originalMeta, setOriginalMeta] = useState(null);
   const [resultUrl, setResultUrl] = useState(null);
   const [resultMeta, setResultMeta] = useState(null);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
 
   const ffmpegRef = useRef(null);
@@ -161,6 +162,22 @@ const AudioTab = () => {
     document.body.removeChild(a);
   };
 
+  const handleCopy = async () => {
+    if (!resultUrl) return;
+    try {
+      const response = await fetch(resultUrl);
+      const blob = await response.blob();
+      await navigator.clipboard.write([
+        new ClipboardItem({ [blob.type]: blob })
+      ]);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Copy failed', err);
+      setError('Copy to clipboard failed. For audio files, direct "Copy File" is only supported by some modern browsers.');
+    }
+  };
+
   const FORMATS = ['mp3', 'wav', 'ogg', 'aac', 'flac'];
 
   return (
@@ -282,10 +299,15 @@ const AudioTab = () => {
                   <p className="font-medium text-gray-900">{formatBytes(resultMeta.size)}</p>
                 </div>
               </div>
-              <button onClick={handleDownload}
-                className="w-full sm:w-auto py-2.5 px-6 bg-gray-900 text-white font-medium rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2">
-                <Download size={18} /> Download
-              </button>
+              <div className="flex gap-2 w-full sm:w-auto">
+                <button onClick={handleCopy} className={`flex-1 sm:flex-initial py-2.5 px-6 font-medium rounded-lg transition-all flex items-center justify-center gap-2 shadow-sm ${copied ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+                  {copied ? <><Check size={18} /> Copied!</> : <><Clipboard size={18} /> Copy</>}
+                </button>
+                <button onClick={handleDownload}
+                  className="flex-1 sm:flex-initial py-2.5 px-6 bg-gray-900 text-white font-medium rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2">
+                  <Download size={18} /> Download
+                </button>
+              </div>
             </div>
           )}
         </div>

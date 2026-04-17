@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, Download, Image as ImageIcon, Link, Link2Off, Settings, Upload } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, Clipboard, Download, Image as ImageIcon, Link, Link2Off, Settings, Upload } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 
 import { formatBytes } from '../../../utils/helpers.js';
@@ -18,6 +18,7 @@ const ImageTab = () => {
   const [originalMeta, setOriginalMeta] = useState(null);
   const [resultMeta, setResultMeta] = useState(null);
   const [isConverting, setIsConverting] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
 
   const previewUrlRef = useRef(null);
@@ -161,6 +162,22 @@ const ImageTab = () => {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+  };
+
+  const handleCopy = async () => {
+    if (!previewUrl) return;
+    try {
+      const response = await fetch(previewUrl);
+      const blob = await response.blob();
+      await navigator.clipboard.write([
+        new ClipboardItem({ [blob.type]: blob })
+      ]);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Copy failed', err);
+      setError('Copy to clipboard failed. Your browser may not support direct copying for this format.');
+    }
   };
 
   return (
@@ -397,10 +414,15 @@ const ImageTab = () => {
                 </div>
               </div>
 
-              <button onClick={handleDownload} className="w-full sm:w-auto py-2.5 px-6 bg-gray-900 text-white font-medium rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2 shadow-sm">
-                <Download size={18} />
-                Download
-              </button>
+              <div className="flex gap-2 w-full sm:w-auto">
+                <button onClick={handleCopy} className={`flex-1 sm:flex-initial py-2.5 px-6 font-medium rounded-lg transition-all flex items-center justify-center gap-2 shadow-sm ${copied ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+                  {copied ? <><Check size={18} /> Copied!</> : <><Clipboard size={18} /> Copy</>}
+                </button>
+                <button onClick={handleDownload} className="flex-1 sm:flex-initial py-2.5 px-6 bg-gray-900 text-white font-medium rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2 shadow-sm">
+                  <Download size={18} />
+                  Download
+                </button>
+              </div>
             </div>
           )}
         </div>
