@@ -346,7 +346,7 @@ const ImageTab = () => {
         <div className="bg-white rounded-2xl shadow-sm p-6 border border-gray-100 flex flex-col h-full">
           <h2 className="text-lg font-semibold flex items-center gap-2 border-b pb-3 mb-4">
             <CheckCircle2 size={18} className="text-green-500" />
-            Result (Preview)
+            Result
           </h2>
 
           {error && (
@@ -364,7 +364,7 @@ const ImageTab = () => {
               <img
                 src={previewUrl}
                 alt="Preview"
-                className="max-w-full max-h-[400px] object-contain shadow-md rounded border border-gray-200"
+                className="max-w-full max-h-[380px] object-contain shadow-md rounded border border-gray-200"
                 style={{
                   backgroundImage: format === 'png' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
                   backgroundSize: '20px 20px',
@@ -377,7 +377,7 @@ const ImageTab = () => {
           </div>
 
           {previewUrl && resultMeta && (
-            <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-4 bg-gray-50 p-4 rounded-xl border border-gray-200">
+            <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-4 bg-gray-50 p-3 rounded-xl border border-gray-200">
               <div className="flex flex-wrap gap-4 w-full sm:w-auto">
                 <div className="space-y-1">
                   <p className="text-xs text-gray-500 uppercase font-semibold">Dimensions</p>

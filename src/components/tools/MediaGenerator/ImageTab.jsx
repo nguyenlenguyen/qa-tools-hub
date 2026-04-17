@@ -1,5 +1,5 @@
-import { AlertCircle, CheckCircle2, Download,Image as ImageIcon, Settings } from 'lucide-react';
-import React, { useEffect, useRef,useState } from 'react';
+import { AlertCircle, CheckCircle2, Download, Image as ImageIcon, Settings } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
 
 import { formatBytes } from '../../../utils/helpers.js';
 
@@ -190,7 +190,7 @@ const ImageTab = () => {
         <div className="bg-white rounded-2xl shadow-sm p-6 border border-gray-100 flex flex-col h-full">
           <h2 className="text-lg font-semibold flex items-center gap-2 border-b pb-3 mb-4">
             <CheckCircle2 size={18} className="text-green-500" />
-            Result (Preview)
+            Result
           </h2>
 
           {error && (
