@@ -285,7 +285,7 @@ const VideoTab = () => {
             <div className="flex flex-wrap gap-2">
               {FORMATS.map(f => (
                 <button key={f} onClick={() => setFormat(f)}
-                  className={`py-1.5 px-3 text-sm font-medium rounded-lg border transition-colors ${format === f ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                  className={`py-2 px-3 text-sm font-medium rounded-lg border transition-colors ${format === f ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
                   {f.toUpperCase()}
                 </button>
               ))}
@@ -297,7 +297,7 @@ const VideoTab = () => {
             <div className="grid grid-cols-4 gap-2">
               {['original', 'low', 'medium', 'high'].map(q => (
                 <button key={q} onClick={() => setQuality(q)}
-                  className={`py-1.5 px-2 text-[11px] font-bold rounded-lg border transition-colors uppercase ${quality === q ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                  className={`py-2 px-2 text-sm font-medium rounded-lg border transition-colors capitalize ${quality === q ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
                   {q}
                 </button>
               ))}
