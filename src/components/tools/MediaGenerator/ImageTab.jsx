@@ -128,11 +128,11 @@ const ImageTab = () => {
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-gray-700">Width (px)</label>
-              <input type="number" value={width} onChange={(e) => setWidth(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow" />
+              <input data-testid="width-input" type="number" value={width} onChange={(e) => setWidth(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow" />
             </div>
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-gray-700">Height (px)</label>
-              <input type="number" value={height} onChange={(e) => setHeight(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow" />
+              <input data-testid="height-input" type="number" value={height} onChange={(e) => setHeight(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow" />
             </div>
           </div>
 
@@ -140,7 +140,7 @@ const ImageTab = () => {
             <label className="text-sm font-medium text-gray-700">File Format</label>
             <div className="grid grid-cols-3 gap-2">
               {['png', 'jpg', 'webp'].map(fmt => (
-                <button key={fmt} onClick={() => setFormat(fmt)} className={`py-2 px-3 text-sm font-medium rounded-lg border transition-colors ${format === fmt ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                <button key={fmt} data-testid={`format-btn-${fmt}`} onClick={() => setFormat(fmt)} className={`py-2 px-3 text-sm font-medium rounded-lg border transition-colors ${format === fmt ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
                   {fmt.toUpperCase()}
                 </button>
               ))}
@@ -151,8 +151,8 @@ const ImageTab = () => {
             <div className="col-span-12 sm:col-span-6 space-y-1.5">
               <label className="text-sm font-medium text-gray-700">Size (Optional)</label>
               <div className="flex gap-2">
-                <input type="number" value={targetSize} onChange={(e) => setTargetSize(e.target.value)} className="w-full min-w-0 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" />
-                <select value={sizeUnit} onChange={(e) => setSizeUnit(e.target.value)} className="w-20 shrink-0 px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white transition-shadow">
+                <input data-testid="target-size-input" type="number" value={targetSize} onChange={(e) => setTargetSize(e.target.value)} className="w-full min-w-0 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" />
+                <select data-testid="size-unit-select" value={sizeUnit} onChange={(e) => setSizeUnit(e.target.value)} className="w-20 shrink-0 px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white transition-shadow">
                   <option value="KB">KB</option>
                   <option value="MB">MB</option>
                 </select>
@@ -162,24 +162,24 @@ const ImageTab = () => {
             <div className="col-span-6 sm:col-span-3 space-y-1.5">
               <label className="text-sm font-medium text-gray-700">Background</label>
               <div className="flex items-center">
-                <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="h-[42px] w-full p-1 border border-gray-300 rounded-lg cursor-pointer" />
+                <input data-testid="bg-color-input" type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="h-[42px] w-full p-1 border border-gray-300 rounded-lg cursor-pointer" />
               </div>
             </div>
 
             <div className="col-span-6 sm:col-span-3 space-y-1.5">
               <label className="text-sm font-medium text-gray-700">Text Color</label>
               <div className="flex items-center">
-                <input type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} className="h-[42px] w-full p-1 border border-gray-300 rounded-lg cursor-pointer" />
+                <input data-testid="text-color-input" type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} className="h-[42px] w-full p-1 border border-gray-300 rounded-lg cursor-pointer" />
               </div>
             </div>
           </div>
 
           <div className="space-y-1.5 pt-1">
             <label className="text-sm font-medium text-gray-700">Custom Text</label>
-            <input type="text" value={customText} onChange={(e) => setCustomText(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" />
+            <input data-testid="custom-text-input" type="text" value={customText} onChange={(e) => setCustomText(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" />
           </div>
 
-          <button onClick={generateImage} disabled={isGenerating} className="w-full py-3 px-4 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-colors focus:ring-4 focus:ring-blue-200 disabled:opacity-70 flex justify-center items-center gap-2 mt-4">
+          <button data-testid="generate-btn" onClick={generateImage} disabled={isGenerating} className="w-full py-3 px-4 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-colors focus:ring-4 focus:ring-blue-200 disabled:opacity-70 flex justify-center items-center gap-2 mt-4">
             <ImageIcon size={18} />
             {isGenerating ? 'Generating...' : 'Generate Image'}
           </button>
@@ -194,7 +194,7 @@ const ImageTab = () => {
           </h2>
 
           {error && (
-            <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg flex items-start gap-2 text-sm">
+            <div data-testid="error-message" className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg flex items-start gap-2 text-sm">
               <AlertCircle size={16} className="mt-0.5 shrink-0" />
               <p>{error}</p>
             </div>
@@ -206,6 +206,7 @@ const ImageTab = () => {
               <img
                 src={previewUrl}
                 alt="Preview"
+                data-testid="preview-img"
                 className="max-w-full max-h-[400px] object-contain shadow-md rounded border border-gray-200"
                 style={{
                   backgroundImage: format === 'png' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
@@ -223,23 +224,23 @@ const ImageTab = () => {
               <div className="flex flex-wrap gap-4 w-full sm:w-auto">
                 <div className="space-y-1">
                   <p className="text-xs text-gray-500 uppercase font-semibold">Dimensions</p>
-                  <p className="font-medium text-gray-900">{resultMeta.width}x{resultMeta.height} px</p>
+                  <p data-testid="result-dimensions" className="font-medium text-gray-900">{resultMeta.width}x{resultMeta.height} px</p>
                 </div>
                 <div className="w-px bg-gray-300 hidden sm:block"></div>
                 <div className="space-y-1">
                   <p className="text-xs text-gray-500 uppercase font-semibold">Format</p>
-                  <p className="font-medium text-gray-900 uppercase">.{resultMeta.format}</p>
+                  <p data-testid="result-format" className="font-medium text-gray-900 uppercase">.{resultMeta.format}</p>
                 </div>
                 <div className="w-px bg-gray-300 hidden sm:block"></div>
                 <div className="space-y-1">
                   <p className="text-xs text-gray-500 uppercase font-semibold">File Size</p>
-                  <p className={`font-medium ${resultMeta.hasTargetSize ? 'text-blue-600' : 'text-gray-900'}`}>
+                  <p data-testid="result-size" className={`font-medium ${resultMeta.hasTargetSize ? 'text-blue-600' : 'text-gray-900'}`}>
                     {formatBytes(resultMeta.size)}
                   </p>
                 </div>
               </div>
 
-              <button onClick={handleDownload} className="w-full sm:w-auto py-2.5 px-6 bg-gray-900 text-white font-medium rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2 shadow-sm">
+              <button data-testid="download-btn" onClick={handleDownload} className="w-full sm:w-auto py-2.5 px-6 bg-gray-900 text-white font-medium rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2 shadow-sm">
                 <Download size={18} />
                 Download
               </button>
