@@ -1,11 +1,10 @@
 # 🧰 QA Tools Hub
 
-A collection of essential browser-based utilities built for **Software Testing & QA** workflows. Everything runs **100% client-side** — no data is ever sent to any server.
+A collection of essential browser-based utilities built for **Software Testing & QA** workflows. Everything runs **100% client-side** — no data is ever sent to any server. The app is also installable as a **Progressive Web App (PWA)** for offline access.
 
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?logo=tailwindcss&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-green)
 
 ---
 
@@ -67,6 +66,7 @@ npm run preview
 - **Media Processing:** FFmpeg WASM (Client-side audio/video processing)
 - **Encryption:** Web Crypto API & CryptoJS
 - **P2P Sharing:** WebRTC (PeerJS)
+- **PWA:** vite-plugin-pwa (Offline support & installable)
 - **Markdown:** Marked.js
 
 ---
@@ -98,12 +98,6 @@ All tools run **entirely in your browser**. Data is processed locally and never 
 - Media files are generated/converted using FFmpeg WASM in a Secure Context.
 - Encryption happens using the browser's native Web Crypto API.
 - P2P sharing connects browsers directly without intermediary storage.
-
----
-
-## 📄 License
-
-This project is open source under the [MIT License](LICENSE).
 
 ---
 
